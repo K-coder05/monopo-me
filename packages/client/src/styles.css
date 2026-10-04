@@ -1,0 +1,307 @@
+:root {
+  --bg: #f4f1ea;
+  --fg: #1c1c1c;
+  --muted: #6b6b6b;
+  --board: #dfeee0;
+  --space: #fbfaf6;
+  --line: #2b2b2b;
+  --accent: #1f6f43;
+  --error: #b00020;
+  font-family: system-ui, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #bbb;
+  border-color: #999;
+  cursor: not-allowed;
+}
+
+input {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.error {
+  color: var(--error);
+}
+
+.token {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 0 1px var(--line);
+  vertical-align: middle;
+}
+
+/* Home and Lobby */
+
+.home,
+.lobby {
+  max-width: 26rem;
+  margin: 2rem auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.home label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  border: none;
+  padding: 0;
+}
+
+.colors legend {
+  margin-bottom: 0.3rem;
+}
+
+.swatch {
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 3px solid transparent;
+}
+
+.swatch.selected {
+  border-color: var(--fg);
+}
+
+.join,
+.share {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.join input,
+.share input {
+  flex: 1;
+  min-width: 0;
+}
+
+.or {
+  text-align: center;
+  color: var(--muted);
+  margin: 0;
+}
+
+.code {
+  font-size: 1.6rem;
+  letter-spacing: 0.2em;
+}
+
+.players {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.players .token {
+  margin-right: 0.5rem;
+}
+
+/* Game */
+
+.game {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 16px;
+  justify-content: center;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(9, 1fr) 1.6fr;
+  grid-template-rows: 1.6fr repeat(9, 1fr) 1.6fr;
+  width: min(calc(100vw - 32px), 90vh, 760px);
+  aspect-ratio: 1;
+  background: var(--board);
+  border: 2px solid var(--line);
+  font-size: clamp(5px, 1.1vmin, 10px);
+}
+
+.space {
+  position: relative;
+  border: 1px solid var(--line);
+  background: var(--space);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  overflow: hidden;
+  padding-bottom: 0.2em;
+}
+
+.space .bar {
+  width: 100%;
+  height: 22%;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.space .icon {
+  font-size: 1.6em;
+  line-height: 1.3;
+}
+
+.space .name {
+  padding: 0 0.2em;
+  line-height: 1.1;
+}
+
+.space .price {
+  color: var(--muted);
+  margin-top: auto;
+}
+
+.space .tokens {
+  position: absolute;
+  bottom: 0.3em;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1px;
+}
+
+.space .tokens .token {
+  width: 1.6em;
+  height: 1.6em;
+}
+
+.corner .name {
+  font-weight: 600;
+}
+
+.centre {
+  grid-row: 2 / span 9;
+  grid-column: 2 / span 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.centre .title {
+  font-size: 4em;
+  font-weight: 700;
+  color: var(--accent);
+  transform: rotate(-30deg);
+}
+
+.dice {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.die {
+  width: 2.2rem;
+  height: 2.2rem;
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  background: white;
+  border: 2px solid var(--line);
+  border-radius: 6px;
+}
+
+.side {
+  flex: 1 1 18rem;
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.strip {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.strip li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.strip li.active {
+  border-color: var(--accent);
+  background: white;
+  font-weight: 600;
+}
+
+.strip .pname {
+  flex: 1;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.actions button {
+  flex: 1;
+}
+
+.log {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.log li + li {
+  border-top: 1px solid #eee;
+}
