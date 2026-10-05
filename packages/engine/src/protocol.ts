@@ -72,12 +72,27 @@ export type ClientToServer = {
   HOST_OVERRIDE: (msg: { override: Override }, ack: Ack) => void;
   /** Steps back over the last game action or Override, up to UNDO_LIMIT times in a row. */
   UNDO: (msg: object, ack: Ack) => void;
+  // Room membership. Host only, except LEAVE_ROOM.
+  /** Freezes play and the Auction countdown for everyone. */
+  PAUSE: (msg: object, ack: Ack) => void;
+  RESUME: (msg: object, ack: Ack) => void;
+  /** Finishes the game now, with no Winner. */
+  END_GAME: (msg: object, ack: Ack) => void;
+  /** Leaves for good (bankrupt to the bank mid-game); this browser's RejoinKey stops working. */
+  LEAVE_ROOM: (msg: object, ack: Ack) => void;
+  /** `targetId` is the Player or Spectator to remove; the client asks the Host to confirm first. */
+  KICK: (msg: { targetId: string }, ack: Ack) => void;
+  TRANSFER_HOST: (msg: { playerId: string }, ack: Ack) => void;
+  /** Makes the Spectator a Player. */
+  ADD_PLAYER: (msg: { spectatorId: string }, ack: Ack) => void;
 };
 
 export type ServerToClient = {
   /** `serverNow` is the server clock (ms) at send time, so clients can show countdowns despite clock skew. */
   /** `away` lists the Players with no open connection. `state` is as this connection may see it (see viewFor). */
   STATE: (msg: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => void;
+  /** This connection no longer belongs to the Room: its Player or Spectator left or was kicked. */
+  REMOVED: (msg: { kicked: boolean }) => void;
 };
 
 export const ROOM_CODE_LENGTH = 5;

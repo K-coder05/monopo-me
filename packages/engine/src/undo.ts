@@ -1,4 +1,4 @@
-import { appendLog, IllegalActionError } from './engine';
+import { appendLog, departing, IllegalActionError } from './engine';
 import { applyPending } from './edits';
 import { wantedCopies } from './cardEdits';
 import type { Action, ActionResult, Deck, DeckKind, GameEvent, GameState } from './types';
@@ -21,6 +21,9 @@ const EDITS = new Set<Action['type']>([
   'LOAD_PRESET',
 ]);
 
+/** Changes to who is in the Room, or who runs it: Undo steps over them too. */
+const ROOM_CHANGES = new Set<Action['type']>(['JOIN_ROOM', 'PAUSE', 'RESUME', 'TRANSFER_HOST', 'HOST_TIMED_OUT']);
+
 /**
  * The Undo history after `action` took the game from `before` to `after`: the snapshots of game
  * state, oldest first, that the server keeps beside a Room's GameState. A game action or Override
@@ -28,7 +31,10 @@ const EDITS = new Set<Action['type']>([
  */
 export function recordUndo(history: GameState[], before: GameState, after: GameState, action: Action): GameState[] {
   if (after.phase === 'lobby' || action.type === 'REMATCH') return [];
-  if (before.phase !== 'playing' || EDITS.has(action.type)) return history;
+  if (before.phase !== 'playing' || EDITS.has(action.type) || ROOM_CHANGES.has(action.type)) return history;
+  // A Player who has left cannot be brought back, so Undo cannot reach past their going.
+  const departed = departing(action);
+  if (departed !== undefined) return before.players.some((p) => p.id === departed) ? [] : history;
   // The log is never rewound, so snapshots leave it out.
   return [...history, { ...before, log: [] }].slice(-UNDO_LIMIT);
 }
@@ -41,12 +47,18 @@ export function recordUndo(history: GameState[], before: GameState, after: GameS
 export function undo(state: GameState, history: GameState[], playerId: string, now: number): ActionResult & { history: GameState[] } {
   if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can Undo');
   const snapshot = history[history.length - 1];
+  if (state.paused) throw new IllegalActionError('The game is paused; resume it first');
   if (state.phase === 'lobby' || !snapshot) throw new IllegalActionError('Nothing to undo');
 
   const events: GameEvent[] = [{ type: 'UNDONE' }];
+  // Spectators stay; a Player added since the snapshot is a Spectator again.
+  const added = state.players.filter((p) => !snapshot.players.some((s) => s.id === p.id));
   let restored: GameState = {
     ...snapshot,
-    hostId: state.hostId,
+    // A Host who was only added since is a Spectator again, so the role goes back to who had it then.
+    hostId: added.some((p) => p.id === state.hostId) ? snapshot.hostId : state.hostId,
+    spectators: [...state.spectators, ...added.map(({ id, name, color }) => ({ id, name, color }))],
+    paused: state.paused,
     rules: state.rules,
     board: state.board,
     pendingEdit: state.pendingEdit,

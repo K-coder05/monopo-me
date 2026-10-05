@@ -31,6 +31,8 @@ let nextToastId = 0;
 
 export function App() {
   const [joined, setJoined] = useState<RejoinKey | null>(null);
+  // Why this browser is back on the Home screen, after leaving or being kicked.
+  const [notice, setNotice] = useState<string | null>(null);
   const [game, setGame] = useState<GameState | null>(null);
   // Server clock minus this device's clock, for countdowns.
   const [clockOffset, setClockOffset] = useState(0);
@@ -62,11 +64,20 @@ export function App() {
         else if (result.error === 'Could not rejoin that Room') clearRejoinKey();
       });
     };
+    // Left or kicked: the stored token no longer works, so start afresh.
+    const onRemoved = ({ kicked }: { kicked: boolean }) => {
+      clearRejoinKey();
+      setJoined(null);
+      setGame(null);
+      setNotice(kicked ? 'The Host removed you from the Room.' : 'You left the Room.');
+    };
     socket.on('STATE', onState);
+    socket.on('REMOVED', onRemoved);
     socket.on('connect', rejoin);
     if (socket.connected) rejoin();
     return () => {
       socket.off('STATE', onState);
+      socket.off('REMOVED', onRemoved);
       socket.off('connect', rejoin);
     };
   }, []);
@@ -74,8 +85,10 @@ export function App() {
   if (!joined || !game) {
     return (
       <Home
+        notice={notice}
         onJoined={(session) => {
           saveRejoinKey(session);
+          setNotice(null);
           setJoined(session);
         }}
       />

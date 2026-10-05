@@ -61,7 +61,11 @@ export type Intent =
   | 'DECLARE_BANKRUPTCY'
   | 'REMATCH'
   | 'BACK_TO_LOBBY'
-  | 'RESET_TO_DEFAULTS';
+  | 'RESET_TO_DEFAULTS'
+  | 'PAUSE'
+  | 'RESUME'
+  | 'END_GAME'
+  | 'LEAVE_ROOM';
 
 /** Resolves with the server's error message, or null if it was accepted. */
 function toError(resolve: (error: string | null) => void): Ack {
@@ -174,4 +178,19 @@ export function hostOverride(override: Override): Promise<string | null> {
 /** Host only: steps back over the last game action or Override. Resolves like `send`. */
 export function undo(): Promise<string | null> {
   return new Promise((resolve) => socket.emit('UNDO', {}, toError(resolve)));
+}
+
+/** Host only: removes a Player (bankrupt to the bank mid-game) or Spectator. Resolves like `send`. */
+export function kick(targetId: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('KICK', { targetId }, toError(resolve)));
+}
+
+/** Host only: hands the Host role to another Player. Resolves like `send`. */
+export function transferHost(playerId: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('TRANSFER_HOST', { playerId }, toError(resolve)));
+}
+
+/** Host only: makes a Spectator a Player. Resolves like `send`. */
+export function addPlayer(spectatorId: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('ADD_PLAYER', { spectatorId }, toError(resolve)));
 }

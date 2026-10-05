@@ -9,7 +9,8 @@ import {
   type PropertyIntent,
   type SpaceDefinition,
 } from '@landlord/engine';
-import { send, sendPropertyAction, type Intent } from './socket';
+import { hostOverride, send, sendPropertyAction, type Intent } from './socket';
+import { LeaveButton } from './LeaveButton';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
@@ -72,6 +73,12 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const canPayFine =
     myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
   const canUseJailCard = myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.heldCards.length > 0;
+  const isHost = me === game.hostId;
+  // Spectators see the game as any non-host Player does, without a panel or actions.
+  const spectating = !myself;
+  const activeName = game.players.find((p) => p.id === turn.playerId)?.name ?? 'Someone';
+  // A turn waits for a Player who is away; the Host may skip it (not mid-Auction or mid-Debt).
+  const activeAway = away.includes(turn.playerId);
 
   return (
     <main className="game">
@@ -84,6 +91,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
               <span className="token" style={{ background: p.color }} />
               <span className="pname">
                 {p.name}
+                {p.id === game.hostId && ' (Host)'}
                 {p.id === me && ' (you)'}
               </span>
               {away.includes(p.id) && (
@@ -108,35 +116,63 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
             </li>
           ))}
         </ul>
+        {game.spectators.length > 0 && <p className="muted">Watching: {game.spectators.map((s) => s.name).join(', ')}</p>}
+        {spectating && <p className="notice">You are watching as a Spectator. The Host can add you as a Player.</p>}
+        {game.paused && (
+          <p className="banner" role="status">
+            The Host has paused the game.
+          </p>
+        )}
+        {activeAway && (
+          <p className="notice">
+            {activeName} is away; their turn waits.{' '}
+            {isHost && (
+              <button
+                className="small"
+                disabled={turn.step === 'auction' || turn.step === 'awaitDebt' || !!game.paused}
+                onClick={async () => setError(await hostOverride({ kind: 'END_TURN' }))}
+              >
+                Skip their turn
+              </button>
+            )}
+          </p>
+        )}
 
         <div className="actions">
-          <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
-            Roll
-          </button>
-          <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
-            Pay fine ({game.rules.jailFine})
-          </button>
-          <button disabled={!canUseJailCard} onClick={() => act('USE_JAIL_CARD')}>
-            Use jail card
-          </button>
-          <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
-            End turn
-          </button>
-          <button
-            className="secondary"
-            disabled={!game.rules.tradingEnabled || !!game.trade || !!myself?.bankrupt || tradePartners(game, me).length === 0}
-            onClick={() => setBuilding(true)}
-          >
-            Trade
-          </button>
+          {!spectating && (
+            <>
+              <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
+                Roll
+              </button>
+              <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
+                Pay fine ({game.rules.jailFine})
+              </button>
+              <button disabled={!canUseJailCard} onClick={() => act('USE_JAIL_CARD')}>
+                Use jail card
+              </button>
+              <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
+                End turn
+              </button>
+              <button
+                className="secondary"
+                disabled={!game.rules.tradingEnabled || !!game.trade || !!myself?.bankrupt || tradePartners(game, me).length === 0}
+                onClick={() => setBuilding(true)}
+              >
+                Trade
+              </button>
+            </>
+          )}
           <button className="secondary" onClick={() => setRulesOpen(true)}>
             Rules
           </button>
           <button className="secondary" onClick={() => setCardsOpen(true)}>
             Cards
           </button>
-          {me === game.hostId && (
+          {isHost && (
             <>
+              <button className="secondary" onClick={() => act(game.paused ? 'RESUME' : 'PAUSE')}>
+                {game.paused ? 'Resume' : 'Pause'}
+              </button>
               <button className="secondary" onClick={() => setPresetsOpen(true)}>
                 Presets
               </button>
@@ -150,69 +186,71 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         {game.pendingEdit && <p className="notice">Rules changes will apply when the current action finishes.</p>}
         {error && <p className="error">{error}</p>}
 
-        <section className="mine" aria-label="My properties">
-          <h3>My properties</h3>
-          {ownedBy(me).length === 0 ? (
-            <p className="muted">None yet</p>
-          ) : (
-            byGroup(ownedBy(me)).map(([group, spaces]) => (
-              <ul key={group} style={{ borderLeftColor: groupColor(group) }}>
-                {spaces.map((s) => {
-                  const buildings = game.deeds[s.index]?.buildings ?? 0;
-                  const mortgaged = !!game.deeds[s.index]?.mortgaged;
-                  return (
-                    <li key={s.index}>
-                      <button type="button" className="link" onClick={() => setSelected(s.index)}>
-                        {s.name}
-                        {mortgaged && ' (mortgaged)'}
-                      </button>
-                      {buildings > 0 && (
-                        <span className="muted"> · {describeBuildings(buildings)}</span>
-                      )}
-                      <span className="build">
-                        {s.type === 'street' && (holdsGroup(s) || buildings > 0) && (
-                          <>
-                            <button
-                              className="small"
-                              disabled={!canManageProperties || buildings === HOTEL}
-                              onClick={() => actOnProperty('BUILD', s.index)}
-                            >
-                              Build ({s.houseCost})
-                            </button>
+        {!spectating && (
+          <section className="mine" aria-label="My properties">
+            <h3>My properties</h3>
+            {ownedBy(me).length === 0 ? (
+              <p className="muted">None yet</p>
+            ) : (
+              byGroup(ownedBy(me)).map(([group, spaces]) => (
+                <ul key={group} style={{ borderLeftColor: groupColor(group) }}>
+                  {spaces.map((s) => {
+                    const buildings = game.deeds[s.index]?.buildings ?? 0;
+                    const mortgaged = !!game.deeds[s.index]?.mortgaged;
+                    return (
+                      <li key={s.index}>
+                        <button type="button" className="link" onClick={() => setSelected(s.index)}>
+                          {s.name}
+                          {mortgaged && ' (mortgaged)'}
+                        </button>
+                        {buildings > 0 && (
+                          <span className="muted"> · {describeBuildings(buildings)}</span>
+                        )}
+                        <span className="build">
+                          {s.type === 'street' && (holdsGroup(s) || buildings > 0) && (
+                            <>
+                              <button
+                                className="small"
+                                disabled={!canManageProperties || buildings === HOTEL}
+                                onClick={() => actOnProperty('BUILD', s.index)}
+                              >
+                                Build ({s.houseCost})
+                              </button>
+                              <button
+                                className="small secondary"
+                                disabled={!canSell || buildings === 0}
+                                onClick={() => actOnProperty('SELL_BUILDING', s.index)}
+                              >
+                                Sell
+                              </button>
+                            </>
+                          )}
+                          {mortgaged ? (
                             <button
                               className="small secondary"
-                              disabled={!canSell || buildings === 0}
-                              onClick={() => actOnProperty('SELL_BUILDING', s.index)}
+                              disabled={!canManageProperties}
+                              onClick={() => actOnProperty('UNMORTGAGE', s.index)}
                             >
-                              Sell
+                              Unmortgage ({unmortgageCost(s, game.rules)})
                             </button>
-                          </>
-                        )}
-                        {mortgaged ? (
-                          <button
-                            className="small secondary"
-                            disabled={!canManageProperties}
-                            onClick={() => actOnProperty('UNMORTGAGE', s.index)}
-                          >
-                            Unmortgage ({unmortgageCost(s, game.rules)})
-                          </button>
-                        ) : (
-                          <button
-                            className="small secondary"
-                            disabled={!canSell || groupHasBuildings(game, s)}
-                            onClick={() => actOnProperty('MORTGAGE', s.index)}
-                          >
-                            Mortgage ({mortgageValue(s, game.rules)})
-                          </button>
-                        )}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            ))
-          )}
-        </section>
+                          ) : (
+                            <button
+                              className="small secondary"
+                              disabled={!canSell || groupHasBuildings(game, s)}
+                              onClick={() => actOnProperty('MORTGAGE', s.index)}
+                            >
+                              Mortgage ({mortgageValue(s, game.rules)})
+                            </button>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ))
+            )}
+          </section>
+        )}
 
         <ol className="log" aria-label="Game log">
           {game.log.map((entry) => (
@@ -220,6 +258,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
           ))}
           <li ref={logEnd} aria-hidden />
         </ol>
+        <LeaveButton game={game} me={me} />
       </aside>
 
       {offered && selected === null && (
@@ -248,7 +287,9 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
       {/* Stays up under an open title deed so nobody loses the countdown while checking the property. */}
       {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
 
-      {game.turn?.step === 'awaitDebt' && <DebtModal game={game} me={me} onTrade={() => setBuilding(true)} />}
+      {game.turn?.step === 'awaitDebt' && (
+        <DebtModal game={game} me={me} away={away} onTrade={() => setBuilding(true)} onHostTools={() => setHostToolsOpen(true)} />
+      )}
 
       {/* After the Debt modal so a debtor's builder opens on top of it. Keyed so each offer starts a fresh builder. */}
       {(building || game.trade) && (
@@ -269,7 +310,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
       {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
       {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
       {presetsOpen && <PresetsPanel game={game} onClose={() => setPresetsOpen(false)} />}
-      {hostToolsOpen && me === game.hostId && <HostToolsPanel game={game} onClose={() => setHostToolsOpen(false)} />}
+      {hostToolsOpen && isHost && <HostToolsPanel game={game} me={me} away={away} onClose={() => setHostToolsOpen(false)} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

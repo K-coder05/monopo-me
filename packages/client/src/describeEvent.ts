@@ -14,7 +14,7 @@ const SKIP_TEXT: Record<SkipReason, string> = {
 
 /** One line of game log text for an event. */
 export function describeEvent(event: GameEvent, game: GameState): string {
-  const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? 'Someone';
+  const name = (id: string) => [...game.players, ...game.spectators].find((p) => p.id === id)?.name ?? 'Someone';
   const creditor = (c: Creditor) => (c.type === 'bank' ? 'the bank' : name(c.playerId));
   const space = (index: number) => game.board[index]?.name ?? `space ${index}`;
 
@@ -41,6 +41,8 @@ export function describeEvent(event: GameEvent, game: GameState): string {
         return 'cancelled the Debt';
       case 'FORCE_DEBT':
         return 'forced the Debt';
+      case 'DECLARE_BANKRUPTCY':
+        return 'declared the debtor bankrupt';
     }
   };
 
@@ -56,6 +58,22 @@ export function describeEvent(event: GameEvent, game: GameState): string {
   switch (event.type) {
     case 'PLAYER_JOINED':
       return `${name(event.playerId)} joined`;
+    case 'SPECTATOR_JOINED':
+      return `${event.name} joined as a Spectator`;
+    case 'PLAYER_ADDED':
+      return `Host added ${name(event.playerId)} as a Player; they play from next round`;
+    case 'LEFT_ROOM':
+      return event.kicked ? `Host kicked ${event.name}` : `${event.name} left`;
+    case 'HOST_CHANGED':
+      return event.automatic
+        ? `${name(event.from)} was away too long; ${name(event.to)} is now the Host`
+        : `${name(event.from)} made ${name(event.to)} the Host`;
+    case 'GAME_PAUSED':
+      return 'Host paused the game';
+    case 'GAME_RESUMED':
+      return 'Host resumed the game';
+    case 'GAME_ENDED':
+      return 'Host ended the game';
     case 'GAME_STARTED':
       return 'The game has started. Rolling for turn order…';
     case 'ROLL_OFF':

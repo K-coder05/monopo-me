@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { HOTEL, isProperty, UNDO_LIMIT, type GameState, type Override } from '@landlord/engine';
-import { hostOverride, undo } from './socket';
+import { hostOverride, send, undo } from './socket';
+import { RoomMembers } from './RoomMembers';
 import { describeBuildings } from './spaces';
 
 type PlayerSelectProps = { game: GameState; value: string; onChange: (id: string) => void; label: string; withBank?: boolean };
@@ -25,7 +26,7 @@ function PlayerSelect({ game, value, onChange, label, withBank }: PlayerSelectPr
  * Host-only side panel with every Override and Undo. Each applies at once and is logged for
  * everyone; the server refuses what does not fit the game right now and says why.
  */
-export function HostToolsPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
+export function HostToolsPanel({ game, me, away, onClose }: { game: GameState; me: string; away: string[]; onClose: () => void }) {
   const firstPlayer = game.players.find((p) => !p.bankrupt)?.id ?? '';
   const properties = game.board.filter(isProperty);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +48,7 @@ export function HostToolsPanel({ game, onClose }: { game: GameState; onClose: ()
   const street = ownedStreets.find((s) => s.index === streetIndex) ?? ownedStreets[0];
   const jailed = game.players.find((p) => p.id === jailPlayer)?.inJail ?? false;
   const cashDelta = Number(amount);
+  const [ending, setEnding] = useState(false);
 
   async function apply(override: Override) {
     setError(await hostOverride(override));
@@ -172,11 +174,33 @@ export function HostToolsPanel({ game, onClose }: { game: GameState; onClose: ()
               Cancel it
             </button>
             <button onClick={() => apply({ kind: 'FORCE_DEBT' })}>Force it (pay or go bankrupt)</button>
+            <button className="secondary" onClick={() => apply({ kind: 'DECLARE_BANKRUPTCY' })}>
+              Declare them bankrupt
+            </button>
           </div>
         </>
       ) : (
         <p className="muted">Nobody owes anything right now.</p>
       )}
+
+      <h3>Players and Spectators</h3>
+      <RoomMembers game={game} me={me} away={away} />
+
+      <h3>End the game</h3>
+      <div className="actions">
+        {ending ? (
+          <>
+            <button onClick={async () => setError(await send('END_GAME'))}>End it now, with no Winner</button>
+            <button className="secondary" onClick={() => setEnding(false)}>
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button className="secondary" onClick={() => setEnding(true)}>
+            End game
+          </button>
+        )}
+      </div>
 
       {error && <p className="error">{error}</p>}
     </aside>

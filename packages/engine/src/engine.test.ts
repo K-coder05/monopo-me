@@ -296,12 +296,12 @@ describe('starting the game', () => {
     ).toThrow(IllegalActionError);
   });
 
-  it('turns away joiners once the game has started', () => {
+  it('seats joiners as Spectators, not Players, once the game has started', () => {
     const state = act(lobby(['ann', 'bob']), { type: 'START_GAME', playerId: 'ann' }, dice(6, 6, 1, 1)).state;
 
-    expect(() => act(state, { type: 'JOIN_ROOM', playerId: 'cat', name: 'cat', color: 'green' })).toThrow(
-      IllegalActionError,
-    );
+    const joined = act(state, { type: 'JOIN_ROOM', playerId: 'cat', name: 'cat', color: 'green' }).state;
+    expect(joined.players.map((p) => p.id)).not.toContain('cat');
+    expect(joined.spectators.map((s) => s.id)).toEqual(['cat']);
   });
 });
 

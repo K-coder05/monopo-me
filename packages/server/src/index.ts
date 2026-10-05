@@ -85,7 +85,18 @@ function bind(socket: GameSocket, { roomCode, playerId }: JoinedRoom, result: Ac
   socket.data.player = { roomCode, playerId };
   rooms.connect(roomCode, playerId);
   void socket.join(roomCode);
-  broadcast(roomCode, result);
+  broadcast(roomCode, { state: rooms.get(roomCode)!, events: result.events });
+}
+
+/** Cuts every connection of a Player or Spectator who left or was kicked loose from the Room. */
+function unbind(roomCode: string, playerId: string, kicked: boolean) {
+  for (const id of [...(io.sockets.adapter.rooms.get(roomCode) ?? [])]) {
+    const socket = io.sockets.sockets.get(id);
+    if (socket?.data.player?.playerId !== playerId) continue;
+    socket.data.player = undefined;
+    void socket.leave(roomCode);
+    socket.emit('REMOVED', { kicked });
+  }
 }
 
 function bindNew(socket: GameSocket, result: RejoinKey & ActionResult): RejoinKey {
@@ -154,6 +165,9 @@ io.on('connection', (socket: GameSocket) => {
     'REMATCH',
     'BACK_TO_LOBBY',
     'RESET_TO_DEFAULTS',
+    'PAUSE',
+    'RESUME',
+    'END_GAME',
   ] as const) {
     socket.on(type, (_msg, ack) =>
       handle(ack, () => {
@@ -277,6 +291,44 @@ io.on('connection', (socket: GameSocket) => {
     handle(ack, () => {
       const { roomCode, playerId } = requirePlayer(socket);
       broadcast(roomCode, rooms.undo(roomCode, playerId));
+      return {};
+    }),
+  );
+
+  socket.on('LEAVE_ROOM', (_msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      const result = rooms.act(roomCode, { type: 'LEAVE_ROOM', playerId });
+      unbind(roomCode, playerId, false);
+      broadcast(roomCode, result);
+      return {};
+    }),
+  );
+
+  // The engine checks the sender is the Host and that the target is in the Room.
+  socket.on('KICK', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      const targetId = String(msg?.targetId ?? '');
+      const result = rooms.act(roomCode, { type: 'KICK', playerId, targetId });
+      unbind(roomCode, targetId, true);
+      broadcast(roomCode, result);
+      return {};
+    }),
+  );
+
+  socket.on('TRANSFER_HOST', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'TRANSFER_HOST', playerId, toId: String(msg?.playerId ?? '') }));
+      return {};
+    }),
+  );
+
+  socket.on('ADD_PLAYER', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'ADD_PLAYER', playerId, spectatorId: String(msg?.spectatorId ?? '') }));
       return {};
     }),
   );

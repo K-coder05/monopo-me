@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { MAX_NAME_LENGTH, ROOM_CODE_LENGTH, TOKEN_COLORS, type Ack, type RejoinKey } from '@landlord/engine';
 import { socket } from './socket';
 
-export function Home({ onJoined }: { onJoined: (session: RejoinKey) => void }) {
+export function Home({ onJoined, notice }: { onJoined: (session: RejoinKey) => void; notice: string | null }) {
   const linkedCode = new URLSearchParams(location.search).get('room')?.toUpperCase() ?? '';
   const [name, setName] = useState('');
   const [color, setColor] = useState<string>(TOKEN_COLORS[0]);
@@ -34,6 +34,7 @@ export function Home({ onJoined }: { onJoined: (session: RejoinKey) => void }) {
   return (
     <main className="home">
       <h1>Landlord</h1>
+      {notice && <p className="notice">{notice}</p>}
 
       <label>
         Your name

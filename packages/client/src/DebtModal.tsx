@@ -3,7 +3,19 @@ import { groupHasBuildings, mortgageValue, type GameState } from '@landlord/engi
 import { send, sendPropertyAction } from './socket';
 
 /** Shown to everyone while a Debt blocks play; only the debtor gets the controls. */
-export function DebtModal({ game, me, onTrade }: { game: GameState; me: string; onTrade: () => void }) {
+export function DebtModal({
+  game,
+  me,
+  away,
+  onTrade,
+  onHostTools,
+}: {
+  game: GameState;
+  me: string;
+  away: string[];
+  onTrade: () => void;
+  onHostTools: () => void;
+}) {
   const [error, setError] = useState<string | null>(null);
   const debt = game.debts[0];
   if (!debt) return null;
@@ -19,6 +31,14 @@ export function DebtModal({ game, me, onTrade }: { game: GameState; me: string; 
           <p>
             {debt.amount} to {creditor}. Waiting for them to sell, mortgage or go bankrupt.
           </p>
+          {me === game.hostId && away.includes(debt.debtorId) && (
+            <>
+              <p className="muted">They are away. You can settle the Debt or declare them bankrupt from Host tools.</p>
+              <button className="secondary" onClick={onHostTools}>
+                Host tools
+              </button>
+            </>
+          )}
         </div>
       </div>
     );

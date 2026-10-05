@@ -4,6 +4,8 @@ import { send } from './socket';
 import { RulesPanel } from './RulesPanel';
 import { CardsPanel } from './CardsPanel';
 import { PresetsPanel } from './PresetsPanel';
+import { RoomMembers } from './RoomMembers';
+import { LeaveButton } from './LeaveButton';
 
 export function Lobby({ game, me, away }: { game: GameState; me: string; away: string[] }) {
   const [error, setError] = useState<string | null>(null);
@@ -38,17 +40,7 @@ export function Lobby({ game, me, away }: { game: GameState; me: string; away: s
       <h2>
         Players ({game.players.length}/{game.rules.maxPlayers})
       </h2>
-      <ul className="players">
-        {game.players.map((p) => (
-          <li key={p.id}>
-            <span className="token" style={{ background: p.color }} />
-            {p.name}
-            {p.id === game.hostId && <em> (Host)</em>}
-            {away.includes(p.id) && <em className="muted"> (away)</em>}
-            {p.id === me && <em> (you)</em>}
-          </li>
-        ))}
-      </ul>
+      <RoomMembers game={game} me={me} away={away} />
 
       <p>
         <button type="button" className="secondary" onClick={() => setRulesOpen(true)}>
@@ -82,6 +74,11 @@ export function Lobby({ game, me, away }: { game: GameState; me: string; away: s
         <p>Waiting for the Host to start the game…</p>
       )}
       {error && <p className="error">{error}</p>}
+      {!isHost && (
+        <p>
+          <LeaveButton game={game} me={me} />
+        </p>
+      )}
     </main>
   );
 }

@@ -2,6 +2,7 @@ import { defaultBoard, defaultCards, defaultRules } from './defaults';
 import { addCard, copiesInPlay, deleteCard, editCard, hideDeckContents, resetDeck, shuffleDeck, wantedCopies } from './cardEdits';
 import { applyPending, resetToDefaults, updateBoard, updateRules } from './edits';
 import { loadPreset } from './presets';
+import { TOKEN_COLORS } from './protocol';
 import type {
   Action,
   AfterDebts,
@@ -75,6 +76,7 @@ export function createGame(
     rules,
     board,
     players: [newPlayer(host, rules, board)],
+    spectators: [],
     deeds: {},
     debts: [],
     bankruptcies: [],
@@ -89,6 +91,7 @@ export function createGame(
 /** `now` is the server's clock in ms; the engine reads it only for Auction countdowns. */
 export function applyAction(state: GameState, action: Action, rules: Rules, rng: Rng, now: number): ActionResult {
   const events: GameEvent[] = [];
+  if (state.paused && !WHILE_PAUSED.has(action.type)) throw new IllegalActionError('The game is paused');
   let next: GameState;
   switch (action.type) {
     case 'JOIN_ROOM':
@@ -196,6 +199,33 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'HOST_OVERRIDE':
       next = hostOverride(state, action.playerId, action.override, rules, now, events);
       break;
+    case 'PAUSE':
+      next = pause(state, action.playerId, now, events);
+      break;
+    case 'RESUME':
+      next = resume(state, action.playerId, rules, now, events);
+      break;
+    case 'LEAVE_ROOM':
+      next = leaveRoom(state, action.playerId, false, rules, now, events);
+      break;
+    case 'KICK':
+      requireHost(state, action.playerId);
+      if (action.targetId === state.hostId) throw new IllegalActionError('You cannot kick yourself');
+      next = leaveRoom(state, action.targetId, true, rules, now, events);
+      break;
+    case 'TRANSFER_HOST':
+      requireHost(state, action.playerId);
+      next = changeHost(state, action.toId, false, events);
+      break;
+    case 'HOST_TIMED_OUT':
+      next = changeHost(state, action.toId, true, events);
+      break;
+    case 'END_GAME':
+      next = endGame(state, action.playerId, events);
+      break;
+    case 'ADD_PLAYER':
+      next = addPlayer(state, action.playerId, action.spectatorId, rules, events);
+      break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
   }
@@ -203,6 +233,101 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     action.type === 'UPDATE_RULES' || action.type === 'UPDATE_BOARD' || action.type === 'RESET_TO_DEFAULTS' || action.type === 'LOAD_PRESET';
   next = applyPending(next, events, isEdit);
   return { state: appendLog(next, events), events };
+}
+
+/**
+ * What may happen while the game is paused: resuming (and a refused second pause), Host edits that touch no game state or timer,
+ * and changes to who is in the Room. Every game action, Override and countdown waits.
+ */
+const WHILE_PAUSED = new Set<Action['type']>([
+  'PAUSE',
+  'RESUME',
+  'JOIN_ROOM',
+  'UPDATE_RULES',
+  'UPDATE_BOARD',
+  'RESET_TO_DEFAULTS',
+  'ADD_CARD',
+  'EDIT_CARD',
+  'DELETE_CARD',
+  'RESET_DECK',
+  'SHUFFLE_DECK',
+  'HIDE_DECK_CONTENTS',
+  'LOAD_PRESET',
+  'END_GAME',
+  'LEAVE_ROOM',
+  'KICK',
+  'TRANSFER_HOST',
+  'HOST_TIMED_OUT',
+  'ADD_PLAYER',
+]);
+
+function requireHost(state: GameState, playerId: string): void {
+  if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can do that');
+}
+
+function requirePlaying(state: GameState): Turn {
+  if (state.phase !== 'playing' || !state.turn) throw new IllegalActionError('No game is in progress');
+  return state.turn;
+}
+
+function pause(state: GameState, playerId: string, now: number, events: GameEvent[]): GameState {
+  requireHost(state, playerId);
+  requirePlaying(state);
+  if (state.paused) throw new IllegalActionError('The game is already paused');
+  events.push({ type: 'GAME_PAUSED' });
+  return { ...state, paused: { at: now } };
+}
+
+/**
+ * Play carries on where it stopped. An open Auction gets back the time it had left when paused;
+ * one that opened during the pause (a Player leaving) gets its full countdown.
+ */
+function resume(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
+  requireHost(state, playerId);
+  if (!state.paused) throw new IllegalActionError('The game is not paused');
+  events.push({ type: 'GAME_RESUMED' });
+  const { auction } = state;
+  const left = auction && Math.min(Math.max(0, auction.endsAt - state.paused.at), rules.auctionSeconds * 1000);
+  return { ...state, paused: undefined, auction: auction && { ...auction, endsAt: now + left! } };
+}
+
+/** The Host role passes to another Player who is still in the game (any Player outside a game). */
+function changeHost(state: GameState, toId: string, automatic: boolean, events: GameEvent[]): GameState {
+  const to = state.players.find((p) => p.id === toId);
+  if (!to || toId === state.hostId || (state.phase === 'playing' && to.bankrupt)) {
+    throw new IllegalActionError('Pick another Player still in the game');
+  }
+  events.push({ type: 'HOST_CHANGED', from: state.hostId, to: toId, automatic });
+  return { ...state, hostId: toId };
+}
+
+/** The Host stops the game early: it is over, with no Winner. */
+function endGame(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  requireHost(state, playerId);
+  requirePlaying(state);
+  events.push({ type: 'GAME_ENDED' });
+  return finish(state, undefined);
+}
+
+/** The game is over: nothing is left running. A game the Host ended has no Winner. */
+function finish(state: GameState, winnerId: string | undefined): GameState {
+  return {
+    ...state,
+    phase: 'finished',
+    winnerId,
+    paused: undefined,
+    turn: undefined,
+    auction: undefined,
+    auctionQueue: undefined,
+    debts: [],
+    trade: undefined,
+  };
+}
+
+/** The Player or Spectator an action takes out of the Room, if any. */
+export function departing(action: Action): string | undefined {
+  if (action.type === 'LEAVE_ROOM') return action.playerId;
+  return action.type === 'KICK' ? action.targetId : undefined;
 }
 
 function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player {
@@ -221,21 +346,49 @@ function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player
   };
 }
 
+/** Joins the lobby as a Player; once the game has started, as a Spectator. */
 function join(
   state: GameState,
   action: Extract<Action, { type: 'JOIN_ROOM' }>,
   rules: Rules,
   events: GameEvent[],
 ): GameState {
-  if (state.phase !== 'lobby') throw new IllegalActionError('The game has already started');
+  const { playerId: id, name, color } = action;
+  if (state.players.some((p) => p.id === id) || state.spectators.some((s) => s.id === id)) {
+    throw new IllegalActionError('Already in this Room');
+  }
+  if (state.phase !== 'lobby') {
+    events.push({ type: 'SPECTATOR_JOINED', spectatorId: id, name });
+    return { ...state, spectators: [...state.spectators, { id, name, color }] };
+  }
   if (state.players.length >= rules.maxPlayers) throw new IllegalActionError('The Room is full');
-  if (state.players.some((p) => p.id === action.playerId)) throw new IllegalActionError('Already in this Room');
-  if (state.players.some((p) => p.color === action.color)) {
+  if (state.players.some((p) => p.color === color)) {
     throw new IllegalActionError('That token colour is taken; pick another');
   }
-  events.push({ type: 'PLAYER_JOINED', playerId: action.playerId });
-  const player = newPlayer({ id: action.playerId, name: action.name, color: action.color }, rules, state.board);
-  return { ...state, players: [...state.players, player] };
+  events.push({ type: 'PLAYER_JOINED', playerId: id });
+  return { ...state, players: [...state.players, newPlayer({ id, name, color }, rules, state.board)] };
+}
+
+/**
+ * Host only, in the lobby or mid-game: the Spectator becomes a Player with startingCash on GO,
+ * last in turn order. Mid-game they first play in the next round. A taken colour is swapped for a
+ * free one.
+ */
+function addPlayer(state: GameState, playerId: string, spectatorId: string, rules: Rules, events: GameEvent[]): GameState {
+  requireHost(state, playerId);
+  if (state.phase === 'finished') throw new IllegalActionError('Go back to the Lobby first');
+  const spectator = state.spectators.find((s) => s.id === spectatorId);
+  if (!spectator) throw new IllegalActionError('Pick a Spectator to add');
+  if (state.players.length >= rules.maxPlayers) throw new IllegalActionError('The Room is full');
+  const taken = new Set(state.players.map((p) => p.color));
+  const color = taken.has(spectator.color) ? TOKEN_COLORS.find((c) => !taken.has(c)) ?? spectator.color : spectator.color;
+  const added = newPlayer({ ...spectator, color }, rules, state.board);
+  events.push({ type: 'PLAYER_ADDED', playerId: spectatorId });
+  return {
+    ...state,
+    players: [...state.players, state.turn ? { ...added, firstRound: state.turn.round + 1 } : added],
+    spectators: state.spectators.filter((s) => s.id !== spectatorId),
+  };
 }
 
 function start(state: GameState, playerId: string, rules: Rules, rng: Rng, events: GameEvent[]): GameState {
@@ -898,7 +1051,7 @@ function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameS
 
 /**
  * Starts the next turn: an extra turn a card granted, else the next Player in turn order who is
- * not bankrupt and has no turns left to skip.
+ * not bankrupt, has no turns left to skip and (if added mid-game) has reached their first round.
  */
 function passTurn(state: GameState, events: GameEvent[]): GameState {
   const turn = state.turn!;
@@ -917,17 +1070,19 @@ function passTurn(state: GameState, events: GameEvent[]): GameState {
   const size = state.players.length;
   let players = state.players;
   let step = 1;
+  const roundOf = (step: number) => (index + step >= size ? turn.round + 1 : turn.round);
   for (;;) {
     const candidate = players[(index + step) % size]!;
-    if (!candidate.bankrupt && candidate.skipTurns === 0) break;
-    if (!candidate.bankrupt) {
+    const waiting = candidate.firstRound !== undefined && candidate.firstRound > roundOf(step);
+    if (!candidate.bankrupt && !waiting && candidate.skipTurns === 0) break;
+    if (!candidate.bankrupt && !waiting) {
       events.push({ type: 'TURN_SKIPPED', playerId: candidate.id });
       players = players.map((p) => (p.id === candidate.id ? { ...p, skipTurns: p.skipTurns - 1 } : p));
     }
     step++;
   }
   const next = players[(index + step) % size]!;
-  const round = index + step >= size ? turn.round + 1 : turn.round;
+  const round = roundOf(step);
   events.push({ type: 'TURN_STARTED', playerId: next.id, round });
   return {
     ...state,
@@ -1023,6 +1178,17 @@ function declareBankruptcy(state: GameState, playerId: string, rules: Rules, now
  * cards go to a Player Creditor, or back to the bottom of their Decks for the bank.
  */
 function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules: Rules, now: number, events: GameEvent[]): GameState {
+  const { state: next, owned } = applyBankruptcy(state, playerId, creditor, events);
+  if (next.phase === 'finished') return next;
+  if (owned.length > 0) return nextBankruptcyAuction({ ...next, auctionQueue: owned }, rules, now, events);
+  return resumeTurn(next, rules, events);
+}
+
+/**
+ * The Bankruptcy itself, before play carries on. Returns the properties a bank Creditor now has to
+ * Auction, in Board order. Ends the game when one Player is left.
+ */
+function applyBankruptcy(state: GameState, playerId: string, creditor: Creditor, events: GameEvent[]): { state: GameState; owned: number[] } {
   events.push({ type: 'BANKRUPT', playerId, creditor });
   const player = findPlayer(state, playerId);
   const owned = Object.keys(state.deeds)
@@ -1061,18 +1227,68 @@ function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules:
   if (left.length === 1) {
     const winnerId = left[0]!.id;
     events.push({ type: 'GAME_OVER', winnerId });
-    return { ...next, phase: 'finished', turn: undefined, auction: undefined, auctionQueue: undefined, debts: [], trade: undefined, winnerId };
+    return { state: finish(next, winnerId), owned: [] };
   }
-  if (creditor.type === 'bank' && owned.length > 0) {
-    return nextBankruptcyAuction({ ...next, auctionQueue: owned }, rules, now, events);
+  return { state: next, owned: creditor.type === 'bank' ? owned : [] };
+}
+
+/**
+ * A Player or Spectator leaves, or is kicked. In the lobby or after the game they are simply gone;
+ * mid-game a Player goes bankrupt to the bank and keeps their row, so turn order is kept.
+ */
+function leaveRoom(state: GameState, id: string, kicked: boolean, rules: Rules, now: number, events: GameEvent[]): GameState {
+  const spectator = state.spectators.find((s) => s.id === id);
+  if (spectator) {
+    events.push({ type: 'LEFT_ROOM', id, name: spectator.name, kicked });
+    return { ...state, spectators: state.spectators.filter((s) => s.id !== id) };
   }
-  return resumeTurn(next, rules, events);
+  const player = state.players.find((p) => p.id === id);
+  if (!player) throw new IllegalActionError('Not in this Room');
+  if (id === state.hostId) throw new IllegalActionError('Hand the Host role to another Player before leaving');
+  // Going bankrupt would move play on, which a pause freezes.
+  if (state.paused) throw new IllegalActionError('The game is paused; resume it first');
+  events.push({ type: 'LEFT_ROOM', id, name: player.name, kicked });
+  if (state.phase !== 'playing') {
+    return { ...state, players: state.players.filter((p) => p.id !== id), bankruptcies: state.bankruptcies.filter((b) => b !== id) };
+  }
+  return player.bankrupt ? state : departMidGame(state, id, rules, now, events);
+}
+
+/**
+ * Bankruptcy to the bank for a Player who left, at whatever point the turn is. They are out of an
+ * open Auction (a bid of theirs no longer counts) and their properties are Auctioned after it. Their
+ * own turn, or a Debt being settled, carries on as after any Bankruptcy; anyone else's turn goes
+ * back to where it was once their properties are sold.
+ */
+function departMidGame(state: GameState, id: string, rules: Rules, now: number, events: GameEvent[]): GameState {
+  const turn = state.turn!;
+  const auction = state.auction && {
+    ...state.auction,
+    bidders: state.auction.bidders.filter((b) => b !== id),
+    highBid: state.auction.highBid?.playerId === id ? undefined : state.auction.highBid,
+  };
+  const { state: out, owned } = applyBankruptcy({ ...state, auction }, id, { type: 'bank' }, events);
+  if (out.phase === 'finished') return out;
+  if (out.auction) {
+    // Queued even when empty, so the Auction closing carries on as after a Bankruptcy.
+    return settleIfDecided({ ...out, auctionQueue: [...(out.auctionQueue ?? []), ...owned] }, rules, now, events);
+  }
+  if (turn.step === 'awaitDebt' || turn.playerId === id) {
+    if (owned.length > 0) return nextBankruptcyAuction({ ...out, auctionQueue: owned }, rules, now, events);
+    return resumeTurn(out, rules, events);
+  }
+  if (owned.length === 0) return out;
+  return nextBankruptcyAuction({ ...out, auctionQueue: owned, turn: { ...out.turn!, resumeStep: turn.step } }, rules, now, events);
 }
 
 /** Opens the Auction for the next property of a bank Bankruptcy, or carries on once none are left. */
 function nextBankruptcyAuction(state: GameState, rules: Rules, now: number, events: GameEvent[]): GameState {
   const [index, ...rest] = state.auctionQueue!;
-  if (index === undefined) return resumeTurn({ ...state, auctionQueue: undefined }, rules, events);
+  if (index === undefined) {
+    const { resumeStep, ...turn } = state.turn!;
+    if (resumeStep) return { ...state, auctionQueue: undefined, turn: { ...turn, step: resumeStep } };
+    return resumeTurn({ ...state, auctionQueue: undefined }, rules, events);
+  }
   const endsAt = countdownEnd(rules, now);
   events.push({ type: 'AUCTION_STARTED', index, endsAt });
   return {
@@ -1688,10 +1904,12 @@ function hostOverride(state: GameState, playerId: string, raw: unknown, rules: R
     }
 
     case 'SETTLE_DEBT':
-    case 'FORCE_DEBT': {
+    case 'FORCE_DEBT':
+    case 'DECLARE_BANKRUPTCY': {
       const debt = state.debts[0];
       if (state.turn.step !== 'awaitDebt' || !debt) throw new IllegalActionError('No Debt is waiting');
       events.push({ type: 'OVERRIDE', override: { kind: override.kind } });
+      if (override.kind === 'DECLARE_BANKRUPTCY') return bankrupt(state, debt.debtorId, debt.creditor, rules, now, events);
       if (override.kind === 'SETTLE_DEBT') return resumeTurn({ ...state, debts: state.debts.slice(1) }, rules, events);
       if (findPlayer(state, debt.debtorId).cash < debt.amount) return bankrupt(state, debt.debtorId, debt.creditor, rules, now, events);
       events.push({ type: 'DEBT_PAID', debtorId: debt.debtorId, creditor: debt.creditor, amount: debt.amount });

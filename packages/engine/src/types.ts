@@ -183,7 +183,12 @@ export type Player = {
   heldCards: string[];
   /** Turns still to miss. */
   skipTurns: number;
+  /** Set for a Player the Host added mid-game: the round of their first turn. */
+  firstRound?: number;
 };
+
+/** A person connected to a Room who is not a Player; `color` is the token they asked for. */
+export type Spectator = { id: string; name: string; color: string };
 
 /** Live ownership state of one property, kept separate from its Space definition. */
 export type Deed = {
@@ -266,6 +271,11 @@ export type Turn = {
   cards: ActiveCard[];
   /** Set for an extra turn: the Player whose place in turn order this turn belongs to. */
   resumeAfter?: string;
+  /**
+   * Set while a departed Player's properties are Auctioned in the middle of someone else's turn:
+   * the step that turn goes back to afterwards.
+   */
+  resumeStep?: TurnStep;
 };
 
 export type JailReason = 'goToJail' | 'doubles' | 'card';
@@ -289,7 +299,9 @@ export type Override =
   /** Cancels the blocking Debt without moving cash. */
   | { kind: 'SETTLE_DEBT' }
   /** Makes the debtor pay the blocking Debt now, or go bankrupt to its Creditor if they cannot. */
-  | { kind: 'FORCE_DEBT' };
+  | { kind: 'FORCE_DEBT' }
+  /** Declares the blocking debtor bankrupt to the Debt's Creditor, whatever they could still raise. */
+  | { kind: 'DECLARE_BANKRUPTCY' };
 
 /** Why part of a Card was not carried out. */
 export type SkipReason = 'selfTransfer' | 'playerGone' | 'badTarget' | 'badAmount' | 'noSuchSpace' | 'inJail';
@@ -298,6 +310,18 @@ export type RollOffRoll = { playerId: string; dice: number[]; total: number };
 
 export type GameEvent =
   | { type: 'PLAYER_JOINED'; playerId: string }
+  /** Someone joined after the game started; `name` is kept because Spectators are not Players. */
+  | { type: 'SPECTATOR_JOINED'; spectatorId: string; name: string }
+  /** The Host made a Spectator a Player. */
+  | { type: 'PLAYER_ADDED'; playerId: string }
+  /** A Player or Spectator left or was kicked; `name` is kept as their row may be gone. */
+  | { type: 'LEFT_ROOM'; id: string; name: string; kicked: boolean }
+  /** `automatic` when the old Host had been away too long. */
+  | { type: 'HOST_CHANGED'; from: string; to: string; automatic: boolean }
+  | { type: 'GAME_PAUSED' }
+  | { type: 'GAME_RESUMED' }
+  /** The Host ended the game early; there is no Winner. */
+  | { type: 'GAME_ENDED' }
   | { type: 'GAME_STARTED' }
   | { type: 'ROLL_OFF'; rolls: RollOffRoll[] }
   | { type: 'TURN_ORDER_SET'; playerIds: string[] }
@@ -378,12 +402,17 @@ export type LogEntry = { seq: number; event: GameEvent };
 
 export type GameState = {
   roomCode: string;
+  /** A game ended by the Host is 'finished' with no `winnerId`. */
   phase: 'lobby' | 'playing' | 'finished';
   hostId: string;
   rules: Rules;
   board: SpaceDefinition[];
   /** In turn order once the game has started; join order in the lobby. */
   players: Player[];
+  /** People who joined after the game started, until the Host adds them as Players. */
+  spectators: Spectator[];
+  /** Set while the Host has the game paused: when they paused it (server ms). */
+  paused?: { at: number };
   /** Keyed by space index; a property with no Deed belongs to the bank. */
   deeds: Record<number, Deed>;
   turn?: Turn;
@@ -465,7 +494,23 @@ export type Action =
   /** Host only. The Rules and Board wait like any Rules edit; the Decks are replaced at once. */
   | { type: 'LOAD_PRESET'; playerId: string; preset: Preset }
   /** Host only. `override` comes from an untrusted sender; the engine checks it. */
-  | { type: 'HOST_OVERRIDE'; playerId: string; override: Override };
+  | { type: 'HOST_OVERRIDE'; playerId: string; override: Override }
+  // Room membership. `playerId` is who sends it; a Spectator may only leave.
+  /** Host only: freezes play and the Auction countdown for everyone. */
+  | { type: 'PAUSE'; playerId: string }
+  | { type: 'RESUME'; playerId: string }
+  /** Host only: finishes the game now with no Winner. */
+  | { type: 'END_GAME'; playerId: string }
+  /** A Player who leaves mid-game goes bankrupt to the bank; the Host must hand on the role first. */
+  | { type: 'LEAVE_ROOM'; playerId: string }
+  /** Host only: removes a Player (bankrupt to the bank mid-game) or a Spectator. */
+  | { type: 'KICK'; playerId: string; targetId: string }
+  /** Host only: hands the Host role to another Player. */
+  | { type: 'TRANSFER_HOST'; playerId: string; toId: string }
+  /** Sent by the server once the Host has been away too long, not by a Player. */
+  | { type: 'HOST_TIMED_OUT'; toId: string }
+  /** Host only: makes a Spectator a Player with startingCash, last in turn order. */
+  | { type: 'ADD_PLAYER'; playerId: string; spectatorId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

@@ -6,6 +6,7 @@ import {
   createGame,
   defaultBoard,
   defaultRules,
+  departing,
   IllegalActionError,
   MAX_NAME_LENGTH,
   recordUndo,
@@ -23,6 +24,9 @@ import {
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export const IDLE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long the Host may be away before the role passes to the next connected Player. */
+export const HOST_AWAY_MS = 2 * 60 * 1000;
 
 /**
  * What one Room's file holds. Tokens stay on the server; they never go out in a STATE, and
@@ -47,8 +51,13 @@ export class Rooms {
   private readonly connections = new Map<string, Map<string, number>>();
   /** The pending Auction countdown for each Room that has one open. */
   private readonly countdowns = new Map<string, ReturnType<typeof setTimeout>>();
+  /** For each Room whose Host has no open connection: since when, and the check due when time is up. */
+  private readonly hostAway = new Map<string, { hostId: string; since: number; timer: ReturnType<typeof setTimeout> }>();
 
-  /** `onTimer` receives changes the server makes on its own, such as an Auction running out. */
+  /**
+   * `onTimer` receives changes the server makes on its own, such as an Auction running out, a
+   * Player who drops counting as passed, or the Host role passing on.
+   */
   constructor(
     private readonly onTimer: (roomCode: string, result: ActionResult) => void,
     private readonly rng: Rng = serverRng,
@@ -62,11 +71,13 @@ export class Rooms {
       try {
         const saved: SavedRoom = JSON.parse(readFileSync(join(dir, file), 'utf8'));
         const code = saved.state.roomCode;
-        this.rooms.set(code, saved.state);
+        // Rooms saved before Spectators existed.
+        this.rooms.set(code, { ...saved.state, spectators: saved.state.spectators ?? [] });
         this.tokens.set(code, new Map(Object.entries(saved.tokens)));
         this.lastActive.set(code, saved.lastActive);
         this.histories.set(code, saved.history ?? []);
         this.scheduleCountdown(code, saved.state);
+        this.watchHost(code);
       } catch (err) {
         console.error(`Skipping unreadable Room file ${file}`, err);
       }
@@ -112,11 +123,24 @@ export class Rooms {
     const counts = this.connections.get(roomCode) ?? new Map<string, number>();
     counts.set(playerId, (counts.get(playerId) ?? 0) + 1);
     this.connections.set(roomCode, counts);
+    this.watchHost(roomCode);
   }
 
+  /** A Player who drops out of an open Auction counts as passed (sent to `onTimer`). */
   disconnect(roomCode: string, playerId: string) {
     const counts = this.connections.get(roomCode);
     counts?.set(playerId, Math.max(0, (counts.get(playerId) ?? 0) - 1));
+    this.watchHost(roomCode);
+    const state = this.rooms.get(roomCode);
+    if (!state?.auction?.bidders.includes(playerId) || !this.isAway(roomCode, playerId)) return;
+    const result = this.passAwayBidders(roomCode, { state, events: [] });
+    if (result.events.length === 0) return;
+    this.record(roomCode, state, result, { type: 'PASS_AUCTION', playerId });
+    this.onTimer(roomCode, result);
+  }
+
+  private isAway(roomCode: string, playerId: string): boolean {
+    return !this.connections.get(roomCode)?.get(playerId);
   }
 
   /** Players with no open connection. */
@@ -130,7 +154,10 @@ export class Rooms {
     for (const [code, last] of this.lastActive) {
       if (this.now() - last <= IDLE_EXPIRY_MS) continue;
       clearTimeout(this.countdowns.get(code));
-      for (const map of [this.rooms, this.tokens, this.lastActive, this.histories, this.connections, this.countdowns]) map.delete(code);
+      clearTimeout(this.hostAway.get(code)?.timer);
+      for (const map of [this.rooms, this.tokens, this.lastActive, this.histories, this.connections, this.countdowns, this.hostAway]) {
+        map.delete(code);
+      }
       if (this.dir) rmSync(join(this.dir, `${code}.json`), { force: true });
     }
   }
@@ -158,13 +185,54 @@ export class Rooms {
     renameSync(`${file}.tmp`, file);
   }
 
+  /**
+   * Runs `action`, then passes for bidders who are away. A Player or Spectator who leaves or is
+   * kicked can no longer rejoin.
+   */
   act(roomCode: string, action: Action): ActionResult {
     const state = this.rooms.get(roomCode);
     if (!state) throw new IllegalActionError(`No Room with code ${roomCode}`);
-    const result = applyAction(state, action, state.rules, this.rng, this.now());
-    this.histories.set(roomCode, recordUndo(this.histories.get(roomCode) ?? [], state, result.state, action));
-    this.commit(roomCode, result.state);
+    const acted = applyAction(state, action, state.rules, this.rng, this.now());
+    const result = this.passAwayBidders(roomCode, acted);
+    const gone = departing(action);
+    if (gone !== undefined) {
+      this.tokens.get(roomCode)?.delete(gone);
+      this.connections.get(roomCode)?.delete(gone);
+    }
+    // Passes made for away bidders are a game action Undo can take back, even after an action it
+    // steps over (a resume, say).
+    const passed = result.events.length > acted.events.length;
+    const history = this.histories.get(roomCode) ?? [];
+    const recorded = recordUndo(history, state, result.state, action);
+    if (passed && recorded === history && gone === undefined) {
+      this.record(roomCode, state, result, { type: 'PASS_AUCTION', playerId: '' });
+    } else {
+      this.histories.set(roomCode, recorded);
+      this.commit(roomCode, result.state);
+    }
     return result;
+  }
+
+  /** Keeps the Undo snapshot for `action` taking the Room from `before` to `result`, and saves. */
+  private record(roomCode: string, before: GameState, result: ActionResult, action: Action) {
+    this.histories.set(roomCode, recordUndo(this.histories.get(roomCode) ?? [], before, result.state, action));
+    this.commit(roomCode, result.state);
+  }
+
+  /** Passes, in the open Auction, for every bidder who is away (one holding the highest bid cannot). */
+  private passAwayBidders(roomCode: string, result: ActionResult): ActionResult {
+    let { state } = result;
+    const events = [...result.events];
+    for (;;) {
+      const { auction } = state;
+      if (!auction || state.paused) break;
+      const away = auction.bidders.find((id) => id !== auction.highBid?.playerId && this.isAway(roomCode, id));
+      if (away === undefined) break;
+      const passed = applyAction(state, { type: 'PASS_AUCTION', playerId: away }, state.rules, this.rng, this.now());
+      state = passed.state;
+      events.push(...passed.events);
+    }
+    return { state, events };
   }
 
   /** Host only: steps the game back over the last game action or Override. */
@@ -181,13 +249,55 @@ export class Rooms {
     this.rooms.set(roomCode, state);
     this.save(roomCode);
     this.scheduleCountdown(roomCode, state);
+    this.watchHost(roomCode);
   }
 
-  /** (Re)starts the Room's Auction countdown to match its state; every bid moves the deadline. */
+  /**
+   * Keeps the 2-minute watch on a Host with no open connection: once it is up the role passes to
+   * the next connected Player in turn order, or to the first to connect if nobody is. It runs while
+   * the game is paused, so a Host who paused and left cannot leave the Room stuck.
+   */
+  private watchHost(roomCode: string) {
+    const state = this.rooms.get(roomCode);
+    const watch = this.hostAway.get(roomCode);
+    clearTimeout(watch?.timer);
+    if (!state || !this.isAway(roomCode, state.hostId)) {
+      this.hostAway.delete(roomCode);
+      return;
+    }
+    const since = watch?.hostId === state.hostId ? watch.since : this.now();
+    // The handover always runs from a timer, never in the middle of another change to the Room.
+    const timer = setTimeout(() => this.handOverHost(roomCode), Math.max(0, since + HOST_AWAY_MS - this.now()));
+    this.hostAway.set(roomCode, { hostId: state.hostId, since, timer });
+  }
+
+  private handOverHost(roomCode: string) {
+    const state = this.rooms.get(roomCode);
+    const watch = this.hostAway.get(roomCode);
+    if (!state || watch?.hostId !== state.hostId || !this.isAway(roomCode, state.hostId)) return;
+    // Timers can fire slightly early against the wall clock; wait out the rest.
+    if (this.now() < watch.since + HOST_AWAY_MS) return this.watchHost(roomCode);
+    const at = state.players.findIndex((p) => p.id === state.hostId);
+    const next = [...state.players.slice(at + 1), ...state.players.slice(0, at)].find(
+      (p) => !this.isAway(roomCode, p.id) && !(state.phase === 'playing' && p.bankrupt),
+    );
+    // Nobody to take over yet: the next connection runs this check again.
+    if (!next) return;
+    try {
+      this.onTimer(roomCode, this.act(roomCode, { type: 'HOST_TIMED_OUT', toId: next.id }));
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  /**
+   * (Re)starts the Room's Auction countdown to match its state; every bid moves the deadline. No
+   * countdown runs while the game is paused.
+   */
   private scheduleCountdown(roomCode: string, state: GameState) {
     clearTimeout(this.countdowns.get(roomCode));
     this.countdowns.delete(roomCode);
-    if (!state.auction) return;
+    if (!state.auction || state.paused) return;
     const delay = Math.max(0, state.auction.endsAt - this.now());
     this.countdowns.set(
       roomCode,

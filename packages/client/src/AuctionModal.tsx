@@ -44,7 +44,7 @@ export function AuctionModal({
       <div className="modal auction" role="dialog" aria-label={`Auction: ${space.name}`}>
         <h2>Auction: {space.name}</h2>
         <p className="countdown" aria-live="polite">
-          {seconds}s
+          {game.paused ? 'Paused' : `${seconds}s`}
         </p>
         <p>
           {highBid ? (
