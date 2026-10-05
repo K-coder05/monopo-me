@@ -8,8 +8,10 @@ import {
   defaultRules,
   IllegalActionError,
   MAX_NAME_LENGTH,
+  recordUndo,
   ROOM_CODE_LENGTH,
   TOKEN_COLORS,
+  undo,
   type Action,
   type ActionResult,
   type GameState,
@@ -22,8 +24,11 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export const IDLE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** What one Room's file holds. Tokens stay on the server; they never go out in a STATE. */
-type SavedRoom = { state: GameState; tokens: Record<string, string>; lastActive: number };
+/**
+ * What one Room's file holds. Tokens stay on the server; they never go out in a STATE, and
+ * neither does the Undo history kept beside the state.
+ */
+type SavedRoom = { state: GameState; tokens: Record<string, string>; lastActive: number; history?: GameState[] };
 
 export const serverRng: Rng = { int: (maxExclusive) => randomInt(maxExclusive) };
 
@@ -36,6 +41,8 @@ export class Rooms {
   /** Each Player's reconnect token, by Room then Player. */
   private readonly tokens = new Map<string, Map<string, string>>();
   private readonly lastActive = new Map<string, number>();
+  /** Each Room's Undo snapshots, oldest first. */
+  private readonly histories = new Map<string, GameState[]>();
   /** Open connections per Player, by Room then Player. */
   private readonly connections = new Map<string, Map<string, number>>();
   /** The pending Auction countdown for each Room that has one open. */
@@ -58,6 +65,7 @@ export class Rooms {
         this.rooms.set(code, saved.state);
         this.tokens.set(code, new Map(Object.entries(saved.tokens)));
         this.lastActive.set(code, saved.lastActive);
+        this.histories.set(code, saved.history ?? []);
         this.scheduleCountdown(code, saved.state);
       } catch (err) {
         console.error(`Skipping unreadable Room file ${file}`, err);
@@ -122,7 +130,7 @@ export class Rooms {
     for (const [code, last] of this.lastActive) {
       if (this.now() - last <= IDLE_EXPIRY_MS) continue;
       clearTimeout(this.countdowns.get(code));
-      for (const map of [this.rooms, this.tokens, this.lastActive, this.connections, this.countdowns]) map.delete(code);
+      for (const map of [this.rooms, this.tokens, this.lastActive, this.histories, this.connections, this.countdowns]) map.delete(code);
       if (this.dir) rmSync(join(this.dir, `${code}.json`), { force: true });
     }
   }
@@ -143,6 +151,7 @@ export class Rooms {
       state: this.rooms.get(roomCode)!,
       tokens: Object.fromEntries(this.tokens.get(roomCode) ?? []),
       lastActive: this.lastActive.get(roomCode)!,
+      history: this.histories.get(roomCode) ?? [],
     };
     const file = join(this.dir, `${roomCode}.json`);
     writeFileSync(`${file}.tmp`, JSON.stringify(saved));
@@ -153,10 +162,25 @@ export class Rooms {
     const state = this.rooms.get(roomCode);
     if (!state) throw new IllegalActionError(`No Room with code ${roomCode}`);
     const result = applyAction(state, action, state.rules, this.rng, this.now());
-    this.rooms.set(roomCode, result.state);
-    this.save(roomCode);
-    this.scheduleCountdown(roomCode, result.state);
+    this.histories.set(roomCode, recordUndo(this.histories.get(roomCode) ?? [], state, result.state, action));
+    this.commit(roomCode, result.state);
     return result;
+  }
+
+  /** Host only: steps the game back over the last game action or Override. */
+  undo(roomCode: string, playerId: string): ActionResult {
+    const state = this.rooms.get(roomCode);
+    if (!state) throw new IllegalActionError(`No Room with code ${roomCode}`);
+    const { history, ...result } = undo(state, this.histories.get(roomCode) ?? [], playerId, this.now());
+    this.histories.set(roomCode, history);
+    this.commit(roomCode, result.state);
+    return result;
+  }
+
+  private commit(roomCode: string, state: GameState) {
+    this.rooms.set(roomCode, state);
+    this.save(roomCode);
+    this.scheduleCountdown(roomCode, state);
   }
 
   /** (Re)starts the Room's Auction countdown to match its state; every bid moves the deadline. */

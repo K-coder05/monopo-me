@@ -1,6 +1,7 @@
 import { DECK_LABELS } from './cardLabels';
 import { RULE_LABELS, SPACE_FIELD_LABELS, showValue } from './ruleLabels';
-import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason, type TradeSide } from '@landlord/engine';
+import { HOTEL, type Creditor, type GameEvent, type GameState, type Override, type SkipReason, type TradeSide } from '@landlord/engine';
+import { describeBuildings } from './spaces';
 
 const SKIP_TEXT: Record<SkipReason, string> = {
   selfTransfer: 'a Player cannot pay themselves',
@@ -16,6 +17,32 @@ export function describeEvent(event: GameEvent, game: GameState): string {
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? 'Someone';
   const creditor = (c: Creditor) => (c.type === 'bank' ? 'the bank' : name(c.playerId));
   const space = (index: number) => game.board[index]?.name ?? `space ${index}`;
+
+  const override = (o: Override): string => {
+    switch (o.kind) {
+      case 'ADJUST_CASH':
+        return o.amount > 0 ? `gave ${name(o.playerId)} ${o.amount}` : `took ${-o.amount} from ${name(o.playerId)}`;
+      case 'MOVE_TOKEN':
+        return `moved ${name(o.playerId)} to ${space(o.index)}`;
+      case 'SET_OWNER':
+        return o.ownerId === null ? `returned ${space(o.index)} to the bank` : `gave ${space(o.index)} to ${name(o.ownerId)}`;
+      case 'SET_BUILDINGS':
+        if (o.buildings === 0) return `cleared the buildings on ${space(o.index)}`;
+        return o.buildings === HOTEL ? `put a hotel on ${space(o.index)}` : `set ${space(o.index)} to ${describeBuildings(o.buildings)}`;
+      case 'SEND_TO_JAIL':
+        return `sent ${name(o.playerId)} to Jail`;
+      case 'RELEASE_FROM_JAIL':
+        return `released ${name(o.playerId)} from Jail`;
+      case 'SKIP_TURN':
+        return `made ${name(o.playerId)} miss their next turn`;
+      case 'END_TURN':
+        return 'ended the turn';
+      case 'SETTLE_DEBT':
+        return 'cancelled the Debt';
+      case 'FORCE_DEBT':
+        return 'forced the Debt';
+    }
+  };
 
   const side = (s: TradeSide) => {
     const parts = [
@@ -173,5 +200,9 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       }`;
     case 'PRESET_APPLIED':
       return `The Rules and Board from the Preset "${event.name}" now apply`;
+    case 'OVERRIDE':
+      return `Host Override: ${override(event.override)}`;
+    case 'UNDONE':
+      return 'Host undid the last action';
   }
 }

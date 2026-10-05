@@ -199,6 +199,8 @@ export type TurnStep =
   | 'auction'
   | 'awaitDebt'
   | 'awaitCard'
+  /** A MANUAL card waits for the Host to resolve it with Overrides, then carry on. */
+  | 'awaitManual'
   | 'awaitEndTurn';
 
 /** The other side of a Debt: one Player or the bank. */
@@ -267,6 +269,27 @@ export type Turn = {
 };
 
 export type JailReason = 'goToJail' | 'doubles' | 'card';
+
+/** A manual Host change to game state, applied at once and logged publicly. */
+export type Override =
+  /** Adds `amount` (negative to take away) to the Player's cash; cash cannot go below 0. */
+  | { kind: 'ADJUST_CASH'; playerId: string; amount: number }
+  /** Puts the token on a space: no GO salary and the space is not resolved. */
+  | { kind: 'MOVE_TOKEN'; playerId: string; index: number }
+  /** Gives the property's Deed to a Player, or back to the bank (`null`). */
+  | { kind: 'SET_OWNER'; index: number; ownerId: string | null }
+  /** Sets an owned street's building count (0–4 houses, or HOTEL), ignoring the building rules. */
+  | { kind: 'SET_BUILDINGS'; index: number; buildings: number }
+  | { kind: 'SEND_TO_JAIL'; playerId: string }
+  | { kind: 'RELEASE_FROM_JAIL'; playerId: string }
+  /** The Player misses their next turn. */
+  | { kind: 'SKIP_TURN'; playerId: string }
+  /** Ends the current turn now, dropping any card still being resolved. */
+  | { kind: 'END_TURN' }
+  /** Cancels the blocking Debt without moving cash. */
+  | { kind: 'SETTLE_DEBT' }
+  /** Makes the debtor pay the blocking Debt now, or go bankrupt to its Creditor if they cannot. */
+  | { kind: 'FORCE_DEBT' };
 
 /** Why part of a Card was not carried out. */
 export type SkipReason = 'selfTransfer' | 'playerGone' | 'badTarget' | 'badAmount' | 'noSuchSpace' | 'inJail';
@@ -346,7 +369,10 @@ export type GameEvent =
   /** Both Decks are replaced at once; the Rules and Board follow as RULE_CHANGED / SPACE_CHANGED. */
   | { type: 'PRESET_LOADED'; name: string; flaggedCards: number }
   /** A Preset's Rules and Board, queued behind an Auction, Debt or Card, now apply. */
-  | { type: 'PRESET_APPLIED'; name: string };
+  | { type: 'PRESET_APPLIED'; name: string }
+  | { type: 'OVERRIDE'; override: Override }
+  /** The Host restored the game to before the last game action or Override. */
+  | { type: 'UNDONE' };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
@@ -396,7 +422,10 @@ export type Action =
   | { type: 'ROLL_DICE'; playerId: string }
   | { type: 'PAY_JAIL_FINE'; playerId: string }
   | { type: 'USE_JAIL_CARD'; playerId: string }
-  /** The drawer, or the Host for a MANUAL card. `choiceId` answers a `drawerChoice` selector. */
+  /**
+   * The drawer dismisses a revealed card, or the Host carries on after resolving a MANUAL card.
+   * `choiceId` answers a `drawerChoice` selector.
+   */
   | { type: 'CONTINUE_CARD'; playerId: string; choiceId?: string }
   | { type: 'BUY_PROPERTY'; playerId: string }
   | { type: 'DECLINE_PROPERTY'; playerId: string }
@@ -434,7 +463,9 @@ export type Action =
   | { type: 'SHUFFLE_DECK'; playerId: string; deck: DeckKind }
   | { type: 'HIDE_DECK_CONTENTS'; playerId: string; hidden: boolean }
   /** Host only. The Rules and Board wait like any Rules edit; the Decks are replaced at once. */
-  | { type: 'LOAD_PRESET'; playerId: string; preset: Preset };
+  | { type: 'LOAD_PRESET'; playerId: string; preset: Preset }
+  /** Host only. `override` comes from an untrusted sender; the engine checks it. */
+  | { type: 'HOST_OVERRIDE'; playerId: string; override: Override };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

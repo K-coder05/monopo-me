@@ -116,4 +116,24 @@ describe('Rooms persistence and reconnect', () => {
     rooms.expireIdle();
     expect(rooms.get(host.roomCode)).toBeDefined();
   });
+
+  it('undoes game actions and Overrides for the Host, across a restart, and leaves Rules edits alone', () => {
+    const rooms = open();
+    const host = rooms.create('Ann', COLORS[0]);
+    const bob = rooms.join(host.roomCode, 'Bob', COLORS[1]);
+    rooms.act(host.roomCode, { type: 'START_GAME', playerId: host.playerId });
+    const adjust = { kind: 'ADJUST_CASH', playerId: bob.playerId, amount: 1 } as const;
+    for (let i = 0; i < 25; i++) rooms.act(host.roomCode, { type: 'HOST_OVERRIDE', playerId: host.playerId, override: adjust });
+    rooms.act(host.roomCode, { type: 'UPDATE_RULES', playerId: host.playerId, changes: { goSalary: 400 } });
+    const cash = () => restarted.get(host.roomCode)!.players.find((p) => p.id === bob.playerId)!.cash;
+
+    expect(() => rooms.act(host.roomCode, { type: 'HOST_OVERRIDE', playerId: bob.playerId, override: adjust })).toThrow('Only the Host');
+    expect(() => rooms.undo(host.roomCode, bob.playerId)).toThrow(IllegalActionError);
+    const restarted = open();
+    for (let i = 0; i < 20; i++) restarted.undo(host.roomCode, host.playerId);
+
+    expect(cash()).toBe(1505);
+    expect(restarted.get(host.roomCode)!.rules.goSalary).toBe(400);
+    expect(() => restarted.undo(host.roomCode, host.playerId)).toThrow('Nothing to undo');
+  });
 });

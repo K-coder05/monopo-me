@@ -16,6 +16,7 @@ import { TitleDeed } from './TitleDeed';
 import { RulesPanel } from './RulesPanel';
 import { CardsPanel } from './CardsPanel';
 import { PresetsPanel } from './PresetsPanel';
+import { HostToolsPanel } from './HostToolsPanel';
 import { AuctionModal } from './AuctionModal';
 import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
@@ -39,6 +40,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const [rulesOpen, setRulesOpen] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  const [hostToolsOpen, setHostToolsOpen] = useState(false);
   const closeDeed = useCallback(() => setSelected(null), []);
   const closeBuilder = useCallback(() => setBuilding(false), []);
   const turn = game.turn!;
@@ -134,9 +136,14 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
             Cards
           </button>
           {me === game.hostId && (
-            <button className="secondary" onClick={() => setPresetsOpen(true)}>
-              Presets
-            </button>
+            <>
+              <button className="secondary" onClick={() => setPresetsOpen(true)}>
+                Presets
+              </button>
+              <button className="secondary" onClick={() => setHostToolsOpen(true)}>
+                Host tools
+              </button>
+            </>
           )}
         </div>
         {game.rulesChangedMidGame && <p className="banner">Rules changed during this game. Open Rules to see the current values.</p>}
@@ -255,11 +262,14 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         />
       )}
 
-      {game.turn?.step === 'awaitCard' && <CardModal game={game} me={me} />}
+      {(game.turn?.step === 'awaitCard' || game.turn?.step === 'awaitManual') && (
+        <CardModal game={game} me={me} onHostTools={() => setHostToolsOpen(true)} />
+      )}
 
       {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
       {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
       {presetsOpen && <PresetsPanel game={game} onClose={() => setPresetsOpen(false)} />}
+      {hostToolsOpen && me === game.hostId && <HostToolsPanel game={game} onClose={() => setHostToolsOpen(false)} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

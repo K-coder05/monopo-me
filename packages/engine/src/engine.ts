@@ -19,6 +19,7 @@ import type {
   GameEvent,
   GameState,
   JailReason,
+  Override,
   PartySelector,
   Player,
   Rng,
@@ -191,6 +192,9 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'LOAD_PRESET':
       next = loadPreset(state, action.playerId, action.preset, rng, events);
+      break;
+    case 'HOST_OVERRIDE':
+      next = hostOverride(state, action.playerId, action.override, rules, now, events);
       break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
@@ -1354,15 +1358,10 @@ function mapSelectors(effect: Effect, fn: (selector: PartySelector) => PartySele
   }
 }
 
-/** Whether the card must be continued by the Host rather than the drawer. */
-function isManual(card: ActiveCard): boolean {
-  return card.remaining.some((e) => e.type === 'MANUAL');
-}
-
 /**
- * The drawer (or, for a MANUAL card, the Host) dismisses the revealed card and its Effects resolve.
- * `drawerChoice` is bound to the Player picked now and `random` to a random other Player, so the
- * rest of the card resolves without more input.
+ * The drawer dismisses the revealed card and its Effects resolve, or the Host carries on after
+ * resolving a MANUAL Effect with Overrides. `drawerChoice` is bound to the Player picked now and
+ * `random` to a random other Player, so the rest of the card resolves without more input.
  */
 function continueCardAction(
   state: GameState,
@@ -1373,12 +1372,13 @@ function continueCardAction(
 ): GameState {
   const turn = state.turn;
   const card = turn?.cards[turn.cards.length - 1];
-  if (state.phase !== 'playing' || !turn || turn.step !== 'awaitCard' || !card) throw new IllegalActionError('There is no card to continue');
-  if (isManual(card)) {
-    if (action.playerId !== state.hostId) throw new IllegalActionError('Only the Host can continue a manual card');
-  } else if (action.playerId !== turn.playerId) {
-    throw new IllegalActionError('Only the Player who drew the card can continue');
+  if (state.phase === 'playing' && turn?.step === 'awaitManual' && card) {
+    if (action.playerId !== state.hostId) throw new IllegalActionError('Only the Host can carry on after a manual card');
+    events.push({ type: 'CARD_CONTINUED', playerId: action.playerId });
+    return continueCard(state, rules, events);
   }
+  if (state.phase !== 'playing' || !turn || turn.step !== 'awaitCard' || !card) throw new IllegalActionError('There is no card to continue');
+  if (action.playerId !== turn.playerId) throw new IllegalActionError('Only the Player who drew the card can continue');
 
   let needsChoice = false;
   for (const effect of card.remaining) {
@@ -1437,7 +1437,8 @@ function runEffect(state: GameState, effect: Effect, rules: Rules, events: GameE
   const done = (s: GameState) => continueCard(s, rules, events);
   switch (effect.type) {
     case 'MANUAL':
-      return done(state);
+      // The Host resolves it with Overrides, then carries on with CONTINUE_CARD.
+      return { ...state, turn: { ...state.turn!, step: 'awaitManual' } };
 
     case 'TRANSFER':
       return transfer(state, effect, rules, events);
@@ -1595,11 +1596,137 @@ function move(
   return land(next, drawerId, rules, events, rentRule);
 }
 
+// ---- Overrides ----
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
+
+/** A manual Host change to game state, applied at once and logged publicly (build spec §5). */
+function hostOverride(state: GameState, playerId: string, raw: unknown, rules: Rules, now: number, events: GameEvent[]): GameState {
+  if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can use Overrides');
+  if (state.phase !== 'playing' || !state.turn) throw new IllegalActionError('Overrides are only for a game in progress');
+  if (!isPlainObject(raw)) throw new IllegalActionError('The Override must be an object');
+  const override = raw as Override;
+  switch (override.kind) {
+    case 'ADJUST_CASH': {
+      const target = overridePlayer(state, override.playerId);
+      if (!isInt(override.amount) || override.amount === 0) throw new IllegalActionError('The amount must be a whole number, not 0');
+      if (target.cash + override.amount < 0) throw new IllegalActionError(`${target.name} has only ${target.cash}`);
+      events.push({ type: 'OVERRIDE', override: { kind: 'ADJUST_CASH', playerId: target.id, amount: override.amount } });
+      return adjustCash(state, target.id, override.amount);
+    }
+
+    case 'MOVE_TOKEN': {
+      const target = overridePlayer(state, override.playerId);
+      if (!isInt(override.index) || !state.board[override.index]) throw new IllegalActionError('No such space on the Board');
+      if (state.turn.step === 'awaitBuyDecision' && state.turn.playerId === target.id) {
+        throw new IllegalActionError(`${target.name} must decide on buying first`);
+      }
+      events.push({ type: 'OVERRIDE', override: { kind: 'MOVE_TOKEN', playerId: target.id, index: override.index } });
+      return updatePlayer(state, target.id, (p) => ({ ...p, position: override.index }));
+    }
+
+    case 'SET_OWNER': {
+      const index = overrideProperty(state, override.index);
+      const deeds = { ...state.deeds };
+      if (override.ownerId === null) {
+        if (!deeds[index]) throw new IllegalActionError('The bank already owns that property');
+        delete deeds[index];
+      } else {
+        const owner = overridePlayer(state, override.ownerId);
+        if (deeds[index]?.ownerId === owner.id) throw new IllegalActionError(`${owner.name} already owns that property`);
+        deeds[index] = { buildings: 0, mortgaged: false, ...deeds[index], ownerId: owner.id };
+      }
+      events.push({ type: 'OVERRIDE', override: { kind: 'SET_OWNER', index, ownerId: override.ownerId } });
+      return { ...state, deeds };
+    }
+
+    case 'SET_BUILDINGS': {
+      const index = overrideProperty(state, override.index);
+      const deed = state.deeds[index];
+      if (state.board[index]!.type !== 'street' || !deed) throw new IllegalActionError('Only an owned street can have buildings');
+      if (deed.mortgaged) throw new IllegalActionError('That street is mortgaged');
+      const { buildings } = override;
+      if (!isInt(buildings) || buildings < 0 || buildings > HOTEL) throw new IllegalActionError('Pick 0–4 houses or a hotel');
+      events.push({ type: 'OVERRIDE', override: { kind: 'SET_BUILDINGS', index, buildings } });
+      return { ...state, deeds: { ...state.deeds, [index]: { ...deed, buildings } } };
+    }
+
+    case 'SEND_TO_JAIL': {
+      const target = overridePlayer(state, override.playerId);
+      if (target.inJail) throw new IllegalActionError(`${target.name} is already in Jail`);
+      events.push({ type: 'OVERRIDE', override: { kind: 'SEND_TO_JAIL', playerId: target.id } });
+      const jail = state.board.find((s) => s.type === 'jail')?.index;
+      const jailed = updatePlayer(state, target.id, (p) => ({ ...p, position: jail ?? p.position, inJail: true, jailTurns: 0 }));
+      const turn = jailed.turn!;
+      if (turn.playerId !== target.id) return jailed;
+      // No roll for a Player jailed before rolling, and no roll again for Doubles; anything under
+      // way (a card, a buy decision) still finishes.
+      return { ...jailed, turn: { ...turn, doublesCount: 0, step: turn.step === 'awaitRoll' ? 'awaitEndTurn' : turn.step } };
+    }
+
+    case 'RELEASE_FROM_JAIL': {
+      const target = overridePlayer(state, override.playerId);
+      if (!target.inJail) throw new IllegalActionError(`${target.name} is not in Jail`);
+      events.push({ type: 'OVERRIDE', override: { kind: 'RELEASE_FROM_JAIL', playerId: target.id } });
+      return updatePlayer(state, target.id, (p) => ({ ...p, inJail: false, jailTurns: 0 }));
+    }
+
+    case 'SKIP_TURN': {
+      const target = overridePlayer(state, override.playerId);
+      events.push({ type: 'OVERRIDE', override: { kind: 'SKIP_TURN', playerId: target.id } });
+      return updatePlayer(state, target.id, (p) => ({ ...p, skipTurns: p.skipTurns + 1 }));
+    }
+
+    case 'END_TURN': {
+      const turn = state.turn;
+      if (turn.step === 'awaitDebt') throw new IllegalActionError('Settle or force the Debt first');
+      if (turn.step === 'auction') throw new IllegalActionError('Wait for the Auction to finish');
+      events.push({ type: 'OVERRIDE', override: { kind: 'END_TURN' } });
+      events.push({ type: 'TURN_ENDED', playerId: turn.playerId });
+      return passTurn({ ...state, turn: { ...turn, cards: [] } }, events);
+    }
+
+    case 'SETTLE_DEBT':
+    case 'FORCE_DEBT': {
+      const debt = state.debts[0];
+      if (state.turn.step !== 'awaitDebt' || !debt) throw new IllegalActionError('No Debt is waiting');
+      events.push({ type: 'OVERRIDE', override: { kind: override.kind } });
+      if (override.kind === 'SETTLE_DEBT') return resumeTurn({ ...state, debts: state.debts.slice(1) }, rules, events);
+      if (findPlayer(state, debt.debtorId).cash < debt.amount) return bankrupt(state, debt.debtorId, debt.creditor, rules, now, events);
+      events.push({ type: 'DEBT_PAID', debtorId: debt.debtorId, creditor: debt.creditor, amount: debt.amount });
+      return resumeTurn({ ...settleNow(state, debt, rules), debts: state.debts.slice(1) }, rules, events);
+    }
+
+    default:
+      throw new IllegalActionError(`${String((override as { kind: unknown }).kind)} is not an Override`);
+  }
+}
+
+/** The property an Override names, which must not be on offer or up for Auction right now. */
+function overrideProperty(state: GameState, index: unknown): number {
+  const space = isInt(index) ? state.board[index] : undefined;
+  if (!space || !isProperty(space)) throw new IllegalActionError('Pick a property');
+  const turn = state.turn!;
+  const offered = turn.step === 'awaitBuyDecision' && findPlayer(state, turn.playerId).position === space.index;
+  if (offered || state.auction?.index === space.index || state.auctionQueue?.includes(space.index)) {
+    throw new IllegalActionError(`${space.name} is being sold right now`);
+  }
+  return space.index;
+}
+
+/** The Player an Override names, who must still be in the game. */
+function overridePlayer(state: GameState, playerId: unknown): Player {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player || player.bankrupt) throw new IllegalActionError('Pick a Player still in the game');
+  return player;
+}
+
 function sum(xs: number[]): number {
   return xs.reduce((a, b) => a + b, 0);
 }
 
-function appendLog(state: GameState, events: GameEvent[]): GameState {
+export function appendLog(state: GameState, events: GameEvent[]): GameState {
   if (events.length === 0) return state;
   const start = state.log.length === 0 ? 0 : state.log[state.log.length - 1]!.seq + 1;
   return { ...state, log: [...state.log, ...events.map((event, i) => ({ seq: start + i, event }))] };

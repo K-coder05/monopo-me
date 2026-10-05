@@ -683,20 +683,35 @@ describe('turn-order Effects', () => {
 });
 
 describe('MANUAL', () => {
-  const manual = card([{ type: 'MANUAL' }], { text: 'The table decides.' });
+  const manual = card([{ type: 'MANUAL' }, { type: 'TRANSFER', amount: 50, from: 'bank', to: 'drawer' }], { text: 'The table decides.' });
 
-  it('waits for the Host to continue, not the drawer', () => {
-    const bobHosts = { ...drawn([manual]).state, hostId: 'bob' };
-
-    expect(() => continued(bobHosts, { by: 'ann' })).toThrow(IllegalActionError);
-    expect(continued(bobHosts, { by: 'bob' }).state.turn?.step).toBe('awaitEndTurn');
-  });
-
-  it('changes nothing in the game by itself', () => {
+  it('pauses for the Host once the drawer continues it', () => {
     const { state } = resolved([manual]);
 
+    expect(state.turn?.step).toBe('awaitManual');
     expect(state.players.map((p) => p.cash)).toEqual([1500, 1500, 1500]);
+  });
+
+  it('lets the Host resolve it with Overrides, then carry on with the rest of the card', () => {
+    const bobHosts = { ...resolved([manual]).state, hostId: 'bob' };
+    const adjusted = act(bobHosts, {
+      type: 'HOST_OVERRIDE',
+      playerId: 'bob',
+      override: { kind: 'ADJUST_CASH', playerId: 'cat', amount: 25 },
+    }).state;
+
+    expect(() => continued(adjusted, { by: 'ann' })).toThrow('Only the Host');
+    const { state } = continued(adjusted, { by: 'bob' });
+
+    expect(state.players.map((p) => p.cash)).toEqual([1550, 1500, 1525]);
     expect(state.turn?.step).toBe('awaitEndTurn');
+  });
+
+  it('is revealed to the drawer like any other card', () => {
+    const bobHosts = { ...drawn([manual]).state, hostId: 'bob' };
+
+    expect(() => continued(bobHosts, { by: 'bob' })).toThrow(IllegalActionError);
+    expect(continued(bobHosts, { by: 'ann' }).state.turn?.step).toBe('awaitManual');
   });
 });
 

@@ -264,6 +264,23 @@ io.on('connection', (socket: GameSocket) => {
     }),
   );
 
+  // The engine checks the sender is the Host and validates the Override.
+  socket.on('HOST_OVERRIDE', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'HOST_OVERRIDE', playerId, override: msg?.override }));
+      return {};
+    }),
+  );
+
+  socket.on('UNDO', (_msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.undo(roomCode, playerId));
+      return {};
+    }),
+  );
+
   // The engine validates the amount (whole number, above the current bid, within cash).
   socket.on('PLACE_BID', (msg, ack) =>
     handle(ack, () => {

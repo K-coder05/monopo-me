@@ -1,4 +1,4 @@
-import type { CardDraft, DeckKind, GameEvent, GameState, HeldCardChoice, Preset, Rules, SpaceEdit, TradeSide } from './types';
+import type { CardDraft, DeckKind, GameEvent, GameState, HeldCardChoice, Override, Preset, Rules, SpaceEdit, TradeSide } from './types';
 
 /** Socket messages shared by server and client. */
 
@@ -67,6 +67,11 @@ export type ClientToServer = {
   EXPORT_PRESET: (msg: { name: string }, ack: Ack<{ preset: Preset }>) => void;
   /** Saves a Preset read from a file, replacing any with the same name; the server checks every value. */
   IMPORT_PRESET: (msg: { preset: Preset }, ack: Ack<{ name: string }>) => void;
+  // Host only, during a game.
+  /** Changes game state directly; logged publicly. */
+  HOST_OVERRIDE: (msg: { override: Override }, ack: Ack) => void;
+  /** Steps back over the last game action or Override, up to UNDO_LIMIT times in a row. */
+  UNDO: (msg: object, ack: Ack) => void;
 };
 
 export type ServerToClient = {

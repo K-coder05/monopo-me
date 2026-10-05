@@ -4,8 +4,11 @@ import { continueCard } from './socket';
 
 const usesChoice = (selector: PartySelector | undefined) => selector === 'drawerChoice';
 
-/** Shown to everyone while a card is revealed; only the drawer (or the Host, for a manual card) continues. */
-export function CardModal({ game, me }: { game: GameState; me: string }) {
+/**
+ * Shown to everyone while a card is revealed, which only the drawer continues, and while a manual
+ * card waits for the Host to resolve it with Overrides and carry on.
+ */
+export function CardModal({ game, me, onHostTools }: { game: GameState; me: string; onHostTools: () => void }) {
   const [choice, setChoice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const turn = game.turn!;
@@ -13,9 +16,9 @@ export function CardModal({ game, me }: { game: GameState; me: string }) {
   if (!card) return null;
 
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? 'Someone';
-  const manual = card.remaining.some((e) => e.type === 'MANUAL');
+  const manual = turn.step === 'awaitManual';
   const continuer = manual ? game.hostId : turn.playerId;
-  const needsChoice = card.remaining.some((e) =>
+  const needsChoice = !manual && card.remaining.some((e) =>
     e.type === 'TRANSFER' ? usesChoice(e.from) || usesChoice(e.to) : 'target' in e && usesChoice(e.target),
   );
   const options = game.players.filter((p) => !p.bankrupt);
@@ -47,14 +50,22 @@ export function CardModal({ game, me }: { game: GameState; me: string }) {
                 </select>
               </label>
             )}
+            {manual && <p className="muted">Resolve this card with Host tools, then press Done.</p>}
             <div className="actions">
+              {manual && (
+                <button className="secondary" onClick={onHostTools}>
+                  Host tools
+                </button>
+              )}
               <button disabled={needsChoice && !choice} onClick={proceed}>
-                Continue
+                {manual ? 'Done' : 'Continue'}
               </button>
             </div>
           </>
         ) : (
-          <p className="muted">Waiting for {name(continuer)} to continue…</p>
+          <p className="muted">
+            {manual ? `Waiting for ${name(continuer)} (Host) to resolve this card…` : `Waiting for ${name(continuer)} to continue…`}
+          </p>
         )}
         {error && <p className="error">{error}</p>}
       </div>

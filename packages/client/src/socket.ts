@@ -5,6 +5,7 @@ import type {
   ClientToServer,
   DeckKind,
   HeldCardChoice,
+  Override,
   Preset,
   PropertyIntent,
   Rules,
@@ -163,4 +164,14 @@ export function exportPreset(name: string): Promise<{ preset: Preset } | { error
 /** Host only: saves a Preset read from a file; resolves with its name, or the server's error message. */
 export function importPreset(preset: Preset): Promise<{ name: string } | { error: string }> {
   return new Promise((resolve) => socket.emit('IMPORT_PRESET', { preset }, toResult(resolve)));
+}
+
+/** Host only: applies an Override to the game; the server checks it. Resolves like `send`. */
+export function hostOverride(override: Override): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('HOST_OVERRIDE', { override }, toError(resolve)));
+}
+
+/** Host only: steps back over the last game action or Override. Resolves like `send`. */
+export function undo(): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('UNDO', {}, toError(resolve)));
 }
