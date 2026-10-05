@@ -16,6 +16,9 @@ export type ClientToServer = {
   START_GAME: (msg: object, ack: Ack) => void;
   ROLL_DICE: (msg: object, ack: Ack) => void;
   PAY_JAIL_FINE: (msg: object, ack: Ack) => void;
+  USE_JAIL_CARD: (msg: object, ack: Ack) => void;
+  /** `choiceId` is the Player picked for a `drawerChoice` card. */
+  CONTINUE_CARD: (msg: { choiceId?: string }, ack: Ack) => void;
   BUY_PROPERTY: (msg: object, ack: Ack) => void;
   DECLINE_PROPERTY: (msg: object, ack: Ack) => void;
   PLACE_BID: (msg: { amount: number }, ack: Ack) => void;

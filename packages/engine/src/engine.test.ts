@@ -8,6 +8,7 @@ import {
   IllegalActionError,
   type Action,
   type Deed,
+  type Decks,
   type GameState,
   type Player,
   type Rng,
@@ -29,9 +30,14 @@ function dice(...faces: number[]): Rng {
 
 const noDice: Rng = dice();
 
+/** Decks with no Cards, so landing on Chance or Treasure draws nothing unless a test sets Decks up. */
+function emptyDecks(): Decks {
+  return { chance: { cards: [], drawPile: [] }, treasure: { cards: [], drawPile: [] } };
+}
+
 function lobby(names: string[], rules: Rules = defaultRules): GameState {
   const [host, ...others] = names;
-  let state = createGame('ABCDE', { id: host!, name: host!, color: `${host}-colour` }, rules, defaultBoard);
+  let state = createGame('ABCDE', { id: host!, name: host!, color: `${host}-colour` }, rules, defaultBoard, emptyDecks());
   for (const name of others) {
     state = act(state, { type: 'JOIN_ROOM', playerId: name, name, color: `${name}-colour` }, noDice, rules).state;
   }
@@ -40,7 +46,23 @@ function lobby(names: string[], rules: Rules = defaultRules): GameState {
 
 /** Applies `action` at time `now` (ms). */
 function act(state: GameState, action: Action, rng: Rng = noDice, rules: Rules = defaultRules, now = 0) {
-  return applyAction(state, action, rules, rng, now);
+  return applyAction(state, action, rules, action.type === 'START_GAME' ? thenZeros(rng) : rng, now);
+}
+
+/** START_GAME shuffles the Decks after the roll-off; once the scripted dice run out those draws get 0. */
+function thenZeros(rng: Rng): Rng {
+  let spent = false;
+  return {
+    int(maxExclusive) {
+      if (spent) return 0;
+      try {
+        return rng.int(maxExclusive);
+      } catch {
+        spent = true;
+        return 0;
+      }
+    },
+  };
 }
 
 describe('roll-off', () => {
@@ -122,6 +144,7 @@ describe('rolling and moving', () => {
     expect(events).toEqual([
       { type: 'DICE_ROLLED', playerId: 'ann', dice: [3, 4], total: 7 },
       { type: 'MOVED', playerId: 'ann', from: 0, to: 7 },
+      { type: 'DECK_EMPTY', playerId: 'ann', deck: 'chance' },
     ]);
   });
 
@@ -211,8 +234,9 @@ describe('game log', () => {
       'TURN_STARTED',
       'DICE_ROLLED',
       'MOVED',
+      'DECK_EMPTY',
     ]);
-    expect(state.log.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(state.log.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
     expect(state.log[0]!.event).toEqual({ type: 'PLAYER_JOINED', playerId: 'ann' });
   });
 });
@@ -364,7 +388,7 @@ describe('buying property', () => {
     const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
 
     expect(state.turn?.step).toBe('awaitEndTurn');
-    expect(events.map((e) => e.type)).toEqual(['DICE_ROLLED', 'MOVED']);
+    expect(events.map((e) => e.type)).toEqual(['DICE_ROLLED', 'MOVED', 'DECK_EMPTY']);
     expect(() => act(state, { type: 'BUY_PROPERTY', playerId: 'ann' })).toThrow(IllegalActionError);
   });
 
@@ -1245,6 +1269,7 @@ describe('Jail', () => {
         { type: 'JAIL_FINE_PAID', playerId: 'ann', amount: 100, forced: true },
         { type: 'LEFT_JAIL', playerId: 'ann' },
         { type: 'MOVED', playerId: 'ann', from: 10, to: 17 },
+        { type: 'DECK_EMPTY', playerId: 'ann', deck: 'treasure' },
       ]);
     });
 

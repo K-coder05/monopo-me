@@ -1,4 +1,13 @@
-import { HOTEL, type Creditor, type GameEvent, type GameState } from '@landlord/engine';
+import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason } from '@landlord/engine';
+
+const SKIP_TEXT: Record<SkipReason, string> = {
+  selfTransfer: 'a Player cannot pay themselves',
+  playerGone: 'the named Player is bankrupt or gone',
+  badTarget: 'that target does not fit this effect',
+  badAmount: 'the amount could not be read',
+  noSuchSpace: 'there is no such space',
+  inJail: 'a Player in Jail cannot move',
+};
 
 /** One line of game log text for an event. */
 export function describeEvent(event: GameEvent, game: GameState): string {
@@ -77,6 +86,30 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} unmortgaged ${space(event.index)} for ${event.cost}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
+    case 'CARD_DRAWN':
+      return `${name(event.playerId)} drew ${event.deck === 'chance' ? 'Chance' : 'Treasure'}: ${event.title}. ${event.text}`;
+    case 'DECK_EMPTY':
+      return `The ${event.deck === 'chance' ? 'Chance' : 'Treasure'} deck is empty; nothing happens`;
+    case 'CARD_CONTINUED':
+      return event.choiceId ? `${name(event.playerId)} chose ${name(event.choiceId)}` : `${name(event.playerId)} continued`;
+    case 'CARD_TRANSFER':
+      return `${creditor(event.from)} → ${creditor(event.to)}: ${event.amount}`;
+    case 'CARD_EFFECT_SKIPPED':
+      return `Card effect skipped: ${SKIP_TEXT[event.reason]}`;
+    case 'CARD_KEPT':
+      return `${name(event.playerId)} keeps a get-out-of-jail card`;
+    case 'JAIL_CARD_USED':
+      return `${name(event.playerId)} used a get-out-of-jail card`;
+    case 'REPAIRS_PAID':
+      return `${name(event.playerId)} paid ${event.amount} for repairs (${event.houses} houses, ${event.hotels} hotels)`;
+    case 'SKIP_TURNS_SET':
+      return `${name(event.playerId)} will miss ${event.count} turn${event.count === 1 ? '' : 's'}`;
+    case 'TURN_SKIPPED':
+      return `${name(event.playerId)} misses their turn`;
+    case 'EXTRA_TURN_GRANTED':
+      return `${name(event.playerId)} gets an extra turn`;
+    case 'POSITIONS_SWAPPED':
+      return `${name(event.playerId)} and ${name(event.otherId)} swapped places`;
     case 'DEBT_OWED':
       return `${name(event.debtorId)} owes ${event.amount} to ${creditor(event.creditor)} and must sell or mortgage`;
     case 'DEBT_PAID':

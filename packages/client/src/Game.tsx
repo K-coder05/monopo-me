@@ -14,6 +14,7 @@ import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
 import { AuctionModal } from './AuctionModal';
+import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
 import { describeBuildings, groupColor } from './spaces';
 
@@ -59,6 +60,7 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
   const holdsGroup = (s: SpaceDefinition) => colourGroup(game.board, s.group).every((g) => game.deeds[g.index]?.ownerId === me);
   const canPayFine =
     myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
+  const canUseJailCard = myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.heldCards.length > 0;
 
   return (
     <main className="game">
@@ -73,6 +75,11 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
                 {p.name}
                 {p.id === me && ' (you)'}
               </span>
+              {p.heldCards.length > 0 && (
+                <span className="muted" title="Get-out-of-jail cards held">
+                  {p.heldCards.length} jail card{p.heldCards.length > 1 ? 's' : ''}
+                </span>
+              )}
               {p.inJail && (
                 <span className="jailed" title={`Failed rolls: ${p.jailTurns} of ${game.rules.maxJailTurns}`}>
                   In Jail
@@ -90,9 +97,11 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
           <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
             Roll
           </button>
-          {/* The "use get-out-of-jail card" button joins this one in the cards ticket. */}
           <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
             Pay fine ({game.rules.jailFine})
+          </button>
+          <button disabled={!canUseJailCard} onClick={() => act('USE_JAIL_CARD')}>
+            Use jail card
           </button>
           <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
             End turn
@@ -199,6 +208,8 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
       {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
 
       {game.turn?.step === 'awaitDebt' && <DebtModal game={game} me={me} />}
+
+      {game.turn?.step === 'awaitCard' && <CardModal game={game} me={me} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

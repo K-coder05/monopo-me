@@ -7,6 +7,7 @@ export type Intent =
   | 'START_GAME'
   | 'ROLL_DICE'
   | 'PAY_JAIL_FINE'
+  | 'USE_JAIL_CARD'
   | 'BUY_PROPERTY'
   | 'DECLINE_PROPERTY'
   | 'PASS_AUCTION'
@@ -32,6 +33,11 @@ export function send(intent: Intent): Promise<string | null> {
  */
 export function sendPropertyAction(intent: PropertyIntent, index: number): Promise<string | null> {
   return new Promise((resolve) => socket.emit(intent, { index }, toError(resolve)));
+}
+
+/** Dismisses the revealed card; `choiceId` is the Player picked for a `drawerChoice` card. Resolves like `send`. */
+export function continueCard(choiceId?: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('CONTINUE_CARD', { choiceId }, toError(resolve)));
 }
 
 /** Bids `amount` in the open Auction; resolves like `send`. */

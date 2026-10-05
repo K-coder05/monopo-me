@@ -1,18 +1,27 @@
-import { defaultBoard, defaultRules } from './defaults';
+import { defaultBoard, defaultCards, defaultRules } from './defaults';
 import type {
   Action,
   AfterDebts,
   ActionResult,
+  ActiveCard,
+  Amount,
   Auction,
+  Card,
   Creditor,
   Debt,
+  Deck,
+  DeckKind,
+  Decks,
+  Effect,
   GameEvent,
   GameState,
   JailReason,
+  PartySelector,
   Player,
   Rng,
   RollOffRoll,
   Rules,
+  SkipReason,
   SpaceDefinition,
   Turn,
 } from './types';
@@ -30,11 +39,25 @@ export const HOTEL = 5;
 
 export type NewPlayer = { id: string; name: string; color: string };
 
+/** A Deck's draw pile holds each enabled Card once per copy, in Card order (START_GAME shuffles it). */
+export function buildDeck(cards: Card[]): Deck {
+  return { cards, drawPile: cards.filter((c) => c.enabled).flatMap((c) => Array<string>(Math.max(0, c.copies)).fill(c.id)) };
+}
+
+/** Fresh copies of the default Chance and Treasure Decks. */
+export function defaultDecks(): Decks {
+  return {
+    chance: buildDeck(structuredClone(defaultCards.chance)),
+    treasure: buildDeck(structuredClone(defaultCards.treasure)),
+  };
+}
+
 export function createGame(
   roomCode: string,
   host: NewPlayer,
   rules: Rules,
   board: SpaceDefinition[],
+  decks: Decks = defaultDecks(),
 ): GameState {
   const state: GameState = {
     roomCode,
@@ -46,6 +69,8 @@ export function createGame(
     deeds: {},
     debts: [],
     bankruptcies: [],
+    extraTurns: [],
+    decks,
     bank: { jackpot: 0 },
     log: [],
   };
@@ -68,6 +93,12 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'PAY_JAIL_FINE':
       next = payJailFine(state, action.playerId, rules, events);
+      break;
+    case 'USE_JAIL_CARD':
+      next = useJailCard(state, action.playerId, events);
+      break;
+    case 'CONTINUE_CARD':
+      next = continueCardAction(state, action, rules, rng, events);
       break;
     case 'BUY_PROPERTY':
       next = buy(state, action.playerId, rules, events);
@@ -128,6 +159,8 @@ function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player
     jailTurns: 0,
     hasPassedGo: false,
     bankrupt: false,
+    heldCards: [],
+    skipTurns: 0,
   };
 }
 
@@ -170,7 +203,8 @@ function start(state: GameState, playerId: string, rules: Rules, rng: Rng, event
     ...state,
     phase: 'playing',
     players,
-    turn: { playerId: first.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1 },
+    decks: shuffledDecks(state.decks, rng),
+    turn: { playerId: first.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1, cards: [] },
   };
 }
 
@@ -239,27 +273,35 @@ function chargeForcedJailFine(state: GameState, playerId: string, total: number,
 }
 
 /**
- * Moves the Player straight to the Jail space without passing GO, and ends their turn with no
- * extra roll for any Doubles.
+ * Moves the Player straight to the Jail space without passing GO. For the active Player this also
+ * ends their turn, with no extra roll for any Doubles.
  */
 function sendToJail(state: GameState, playerId: string, reason: JailReason, events: GameEvent[]): GameState {
   events.push({ type: 'JAILED', playerId, reason });
   const jail = state.board.find((s) => s.type === 'jail')?.index;
   const jailed = updatePlayer(state, playerId, (p) => ({ ...p, position: jail ?? p.position, inJail: true, jailTurns: 0 }));
-  return { ...jailed, turn: { ...jailed.turn!, step: 'awaitEndTurn', doublesCount: 0 } };
+  if (jailed.turn?.playerId !== playerId) return jailed;
+  return { ...jailed, turn: { ...jailed.turn, step: 'awaitEndTurn', doublesCount: 0 } };
 }
 
-/** Every way out of Jail ends here: the fine, Doubles, and (from the cards ticket) a get-out-of-jail card. */
+/** Every way out of Jail ends here: the fine, Doubles and a get-out-of-jail card. */
 function releaseFromJail(state: GameState, playerId: string, events: GameEvent[]): GameState {
   events.push({ type: 'LEFT_JAIL', playerId });
   return updatePlayer(state, playerId, (p) => ({ ...p, inJail: false, jailTurns: 0 }));
 }
 
 /**
- * Moves `playerId` `steps` spaces clockwise, paying goSalary each time they land on or pass GO.
- * A move that ends on GO pays double when doubleSalaryOnExactGo is on.
+ * Moves `playerId` `steps` spaces clockwise, paying goSalary each time they land on or pass GO
+ * (unless `collectGo` is off). A move that ends on GO pays double when doubleSalaryOnExactGo is on.
  */
-function moveForward(state: GameState, playerId: string, steps: number, rules: Rules, events: GameEvent[]): GameState {
+function moveForward(
+  state: GameState,
+  playerId: string,
+  steps: number,
+  rules: Rules,
+  events: GameEvent[],
+  collectGo = true,
+): GameState {
   const size = state.board.length;
   const go = goIndex(state.board);
   const from = findPlayer(state, playerId).position;
@@ -268,22 +310,35 @@ function moveForward(state: GameState, playerId: string, steps: number, rules: R
 
   const laps = go === undefined ? 0 : Math.floor((((from - go + size) % size) + steps) / size);
   const exactBonus = laps > 0 && to === go && rules.doubleSalaryOnExactGo ? 1 : 0;
-  const salary = (laps + exactBonus) * rules.goSalary;
+  const salary = collectGo ? (laps + exactBonus) * rules.goSalary : 0;
   if (salary > 0) events.push({ type: 'GO_SALARY', playerId, amount: salary });
   return updatePlayer(state, playerId, (p) => ({
     ...p,
     position: to,
     cash: p.cash + salary,
-    hasPassedGo: p.hasPassedGo || laps > 0,
+    hasPassedGo: p.hasPassedGo || (collectGo && laps > 0),
   }));
 }
 
+/** Moves `playerId` `steps` spaces anticlockwise; going back never collects a salary. */
+function moveBack(state: GameState, playerId: string, steps: number, events: GameEvent[]): GameState {
+  const size = state.board.length;
+  const from = findPlayer(state, playerId).position;
+  const to = (((from - steps) % size) + size) % size;
+  events.push({ type: 'MOVED', playerId, from, to });
+  return updatePlayer(state, playerId, (p) => ({ ...p, position: to }));
+}
+
+/** How a card move changes the rent of the property it lands on. */
+type RentRule = { rentMultiplier?: number; diceMultiplier?: number };
+
 /** Resolves the space `playerId` is standing on and sets the next turn step. */
-function land(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+function land(state: GameState, playerId: string, rules: Rules, events: GameEvent[], rentRule: RentRule = {}): GameState {
   const player = findPlayer(state, playerId);
   const space = state.board[player.position]!;
   const finishLanding = (s: GameState) => landingResolved(s, rules, events);
-  if (space.type === 'goToJail') return sendToJail(state, playerId, 'goToJail', events);
+  if (space.type === 'goToJail') return resumeCards(sendToJail(state, playerId, 'goToJail', events), rules, events);
+  if (space.type === 'chance' || space.type === 'treasure') return drawCard(state, space.type, playerId, rules, events);
   if (space.type === 'tax') {
     const amount = space.taxAmount ?? 0;
     events.push({ type: 'TAX_PAID', playerId, index: space.index, amount });
@@ -313,18 +368,20 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
     return finishLanding(state);
   }
 
-  const amount = rentFor(state, space, deed.ownerId, rules);
+  const amount = modifiedRent(state, space, rentFor(state, space, deed.ownerId, rules), rentRule);
   events.push({ type: 'RENT_PAID', playerId, ownerId: deed.ownerId, index: space.index, amount });
   const debt: Debt = { debtorId: playerId, creditor: { type: 'player', playerId: deed.ownerId }, amount, feedsJackpot: false };
   return charge(state, debt, 'landingResolved', rules, events);
 }
 
 /**
- * Called once the landing space is fully resolved (including any buy decision or Auction):
- * the Player rolls again after Doubles when doublesRollAgain is on, otherwise may end their turn.
+ * Called once the landing space is fully resolved (including any buy decision or Auction): a card
+ * being resolved carries on with its next Effect; otherwise the Player rolls again after Doubles
+ * when doublesRollAgain is on, or may end their turn.
  */
 function landingResolved(state: GameState, rules: Rules, events: GameEvent[]): GameState {
   const turn = state.turn!;
+  if (turn.cards.length > 0) return continueCard(state, rules, events);
   if (turn.doublesCount > 0 && rules.doublesRollAgain && !findPlayer(state, turn.playerId).inJail) {
     events.push({ type: 'ROLL_AGAIN', playerId: turn.playerId });
     return { ...state, turn: { ...turn, step: 'awaitRoll' } };
@@ -682,17 +739,45 @@ function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameS
   return passTurn(state, events);
 }
 
-/** Starts the next turn for the next Player not bankrupt, after the active Player. */
+/**
+ * Starts the next turn: an extra turn a card granted, else the next Player in turn order who is
+ * not bankrupt and has no turns left to skip.
+ */
 function passTurn(state: GameState, events: GameEvent[]): GameState {
   const turn = state.turn!;
-  const index = state.players.findIndex((p) => p.id === turn.playerId);
+  const owner = turn.resumeAfter ?? turn.playerId;
+  const [extraId, ...laterExtras] = state.extraTurns.filter((id) => !findPlayer(state, id).bankrupt);
+  if (extraId !== undefined) {
+    events.push({ type: 'TURN_STARTED', playerId: extraId, round: turn.round });
+    return {
+      ...state,
+      extraTurns: laterExtras,
+      turn: { playerId: extraId, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: turn.round, cards: [], resumeAfter: owner },
+    };
+  }
+
+  const index = state.players.findIndex((p) => p.id === owner);
   const size = state.players.length;
+  let players = state.players;
   let step = 1;
-  while (state.players[(index + step) % size]!.bankrupt) step++;
-  const next = state.players[(index + step) % size]!;
+  for (;;) {
+    const candidate = players[(index + step) % size]!;
+    if (!candidate.bankrupt && candidate.skipTurns === 0) break;
+    if (!candidate.bankrupt) {
+      events.push({ type: 'TURN_SKIPPED', playerId: candidate.id });
+      players = players.map((p) => (p.id === candidate.id ? { ...p, skipTurns: p.skipTurns - 1 } : p));
+    }
+    step++;
+  }
+  const next = players[(index + step) % size]!;
   const round = index + step >= size ? turn.round + 1 : turn.round;
   events.push({ type: 'TURN_STARTED', playerId: next.id, round });
-  return { ...state, turn: { playerId: next.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round } };
+  return {
+    ...state,
+    players,
+    extraTurns: [],
+    turn: { playerId: next.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round, cards: [] },
+  };
 }
 
 function activePlayers(state: GameState): Player[] {
@@ -717,7 +802,12 @@ function settleNow(state: GameState, debt: Debt, rules: Rules): GameState {
  * the turn carries on as `afterDebts` says.
  */
 function charge(state: GameState, debt: Debt, afterDebts: AfterDebts, rules: Rules, events: GameEvent[]): GameState {
-  const queued = { ...state, debts: [...state.debts, debt], turn: { ...state.turn!, afterDebts } };
+  return chargeAll(state, [debt], afterDebts, rules, events);
+}
+
+/** Like `charge` for several Debts at once, queued in the order given. */
+function chargeAll(state: GameState, debts: Debt[], afterDebts: AfterDebts, rules: Rules, events: GameEvent[]): GameState {
+  const queued = { ...state, debts: [...state.debts, ...debts], turn: { ...state.turn!, afterDebts } };
   return resumeTurn(queued, rules, events);
 }
 
@@ -772,8 +862,8 @@ function declareBankruptcy(state: GameState, playerId: string, rules: Rules, now
 /**
  * Takes `playerId` out of the game. Everything they have left goes to `creditor`; Debts they owe, or
  * that were owed to them, are cancelled. A bank Creditor has the properties Auctioned unmortgaged,
- * one by one. Buildings stay on streets that pass to a Player and are cleared for the bank.
- * (Kept cards will go with the cards ticket.)
+ * one by one. Buildings stay on streets that pass to a Player and are cleared for the bank. Kept
+ * cards go to a Player Creditor, or back to the bottom of their Decks for the bank.
  */
 function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules: Rules, now: number, events: GameEvent[]): GameState {
   events.push({ type: 'BANKRUPT', playerId, creditor });
@@ -783,7 +873,16 @@ function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules:
     .filter((i) => state.deeds[i]!.ownerId === playerId)
     .sort((a, b) => a - b);
 
-  let next = updatePlayer(state, playerId, (p) => ({ ...p, cash: 0, bankrupt: true, inJail: false, jailTurns: 0 }));
+  let next = updatePlayer(state, playerId, (p) => ({
+    ...p,
+    cash: 0,
+    bankrupt: true,
+    inJail: false,
+    jailTurns: 0,
+    heldCards: [],
+    skipTurns: 0,
+  }));
+  next = creditor.type === 'player' ? giveCards(next, creditor.playerId, player.heldCards) : returnCards(next, player.heldCards);
   const deeds = { ...next.deeds };
   for (const i of owned) delete deeds[i];
   if (creditor.type === 'player') {
@@ -796,6 +895,7 @@ function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules:
     ...next,
     deeds,
     bankruptcies: [...next.bankruptcies, playerId],
+    extraTurns: next.extraTurns.filter((id) => id !== playerId),
     debts: next.debts.filter((d) => !cancelled(d)),
   };
 
@@ -826,11 +926,13 @@ function nextBankruptcyAuction(state: GameState, rules: Rules, now: number, even
 }
 
 /** Everyone starts again with `rules` and `board`: cash, tokens and all game state reset. */
-function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[]): GameState {
+function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[], decks: Decks): GameState {
   return {
     ...state,
     rules,
     board,
+    decks,
+    extraTurns: [],
     players: state.players.map((p) => newPlayer(p, rules, board)),
     deeds: {},
     debts: [],
@@ -852,12 +954,8 @@ function requireHostAtGameOver(state: GameState, playerId: string): void {
 /** Same Players in a new random order (no roll-off), with the Defaults restored. */
 function rematch(state: GameState, playerId: string, rng: Rng, events: GameEvent[]): GameState {
   requireHostAtGameOver(state, playerId);
-  const fresh = freshGame(state, structuredClone(defaultRules), structuredClone(defaultBoard));
-  const order = [...fresh.players];
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = rng.int(i + 1);
-    [order[i], order[j]] = [order[j]!, order[i]!];
-  }
+  const fresh = freshGame(state, structuredClone(defaultRules), structuredClone(defaultBoard), defaultDecks());
+  const order = shuffle(fresh.players, rng);
   events.push({ type: 'GAME_STARTED' });
   events.push({ type: 'TURN_ORDER_SET', playerIds: order.map((p) => p.id) });
   events.push({ type: 'TURN_STARTED', playerId: order[0]!.id, round: 1 });
@@ -865,7 +963,8 @@ function rematch(state: GameState, playerId: string, rng: Rng, events: GameEvent
     ...fresh,
     phase: 'playing',
     players: order,
-    turn: { playerId: order[0]!.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1 },
+    decks: shuffledDecks(fresh.decks, rng),
+    turn: { playerId: order[0]!.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1, cards: [] },
   };
 }
 
@@ -873,7 +972,8 @@ function rematch(state: GameState, playerId: string, rng: Rng, events: GameEvent
 function backToLobby(state: GameState, playerId: string, events: GameEvent[]): GameState {
   requireHostAtGameOver(state, playerId);
   events.push({ type: 'RETURNED_TO_LOBBY' });
-  return { ...freshGame(state, state.rules, state.board), phase: 'lobby' };
+  const decks = { chance: buildDeck(state.decks.chance.cards), treasure: buildDeck(state.decks.treasure.cards) };
+  return { ...freshGame(state, state.rules, state.board, decks), phase: 'lobby' };
 }
 
 /**
@@ -911,6 +1011,426 @@ function roundUp(x: number): number {
 /** Rounds a calculated amount a Player receives down to a whole number, with roundUp's tolerance. */
 function roundDown(x: number): number {
   return Math.floor(x + 1e-9);
+}
+
+function shuffle<T>(items: T[], rng: Rng): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = rng.int(i + 1);
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
+
+/** Both Decks with their draw piles rebuilt from the Cards and shuffled. */
+function shuffledDecks(decks: Decks, rng: Rng): Decks {
+  const fresh = (deck: Deck): Deck => ({ ...deck, drawPile: shuffle(buildDeck(deck.cards).drawPile, rng) });
+  return { chance: fresh(decks.chance), treasure: fresh(decks.treasure) };
+}
+
+// ---- Cards ----
+
+function findCard(state: GameState, cardId: string): Card | undefined {
+  return [...state.decks.chance.cards, ...state.decks.treasure.cards].find((c) => c.id === cardId);
+}
+
+/** Puts each card at the bottom of its Deck. */
+function returnCards(state: GameState, cardIds: string[]): GameState {
+  const decks = { ...state.decks };
+  for (const id of cardIds) {
+    const kind = findCard(state, id)?.deck;
+    if (kind) decks[kind] = { ...decks[kind], drawPile: [...decks[kind].drawPile, id] };
+  }
+  return { ...state, decks };
+}
+
+function giveCards(state: GameState, playerId: string, cardIds: string[]): GameState {
+  return updatePlayer(state, playerId, (p) => ({ ...p, heldCards: [...p.heldCards, ...cardIds] }));
+}
+
+/** Leaving Jail with a held get-out-of-jail card, which goes back to the bottom of its Deck. */
+function useJailCard(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  requireTurn(state, playerId, 'awaitRoll');
+  const player = findPlayer(state, playerId);
+  if (!player.inJail) throw new IllegalActionError('You are not in Jail');
+  const [cardId, ...kept] = player.heldCards;
+  if (cardId === undefined) throw new IllegalActionError('You have no get-out-of-jail card');
+  events.push({ type: 'JAIL_CARD_USED', playerId, cardId });
+  const returned = returnCards(updatePlayer(state, playerId, (p) => ({ ...p, heldCards: kept })), [cardId]);
+  return releaseFromJail(returned, playerId, events);
+}
+
+/** Rent after a card move: a multiple of the usual rent, or a multiple of the last dice roll. */
+function modifiedRent(state: GameState, space: SpaceDefinition, rent: number, { rentMultiplier, diceMultiplier }: RentRule): number {
+  if (diceMultiplier !== undefined && space.type === 'utility') return roundUp(diceMultiplier * sum(state.turn!.lastRoll));
+  return rentMultiplier !== undefined ? roundUp(rent * rentMultiplier) : rent;
+}
+
+/** Draws the top card of a Deck for `playerId`, revealing it; it waits there for CONTINUE_CARD. */
+function drawCard(state: GameState, kind: DeckKind, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  const deck = state.decks[kind];
+  const [top, ...rest] = deck.drawPile;
+  const card = deck.cards.find((c) => c.id === top);
+  if (top === undefined || !card) {
+    events.push({ type: 'DECK_EMPTY', playerId, deck: kind });
+    return landingResolved(state, rules, events);
+  }
+  const active: ActiveCard = {
+    cardId: card.id,
+    deck: kind,
+    title: card.title,
+    text: renderCardText(state, card, playerId),
+    remaining: card.effects,
+  };
+  events.push({ type: 'CARD_DRAWN', playerId, deck: kind, cardId: card.id, title: card.title, text: active.text });
+  // The card goes to the bottom now, so it is never lost; a kept card comes out again when it is held.
+  const decks = { ...state.decks, [kind]: { ...deck, drawPile: [...rest, top] } };
+  return { ...state, decks, turn: { ...state.turn!, step: 'awaitCard', cards: [...state.turn!.cards, active] } };
+}
+
+/** The card's text with {from}, {to} and {amount} filled in from its first Transfer. */
+function renderCardText(state: GameState, card: Card, drawerId: string): string {
+  const transfer = card.effects.find((e) => e.type === 'TRANSFER');
+  if (transfer?.type !== 'TRANSFER') return card.text;
+  return card.text
+    .replace(/\{from\}/g, () => describeParty(state, transfer.from, drawerId))
+    .replace(/\{to\}/g, () => describeParty(state, transfer.to, drawerId))
+    .replace(/\{amount\}/g, () => describeAmount(state, transfer.amount));
+}
+
+function describeParty(state: GameState, selector: PartySelector, drawerId: string): string {
+  switch (selector) {
+    case 'bank':
+      return 'the bank';
+    case 'allOthers':
+      return 'every other player';
+    case 'everyone':
+      return 'everyone';
+    case 'drawerChoice':
+      return 'the player of your choice';
+    case 'random':
+      return 'a random player';
+    default: {
+      const [party] = resolveParty(state, selector, drawerId) ?? [];
+      const player = party?.type === 'player' ? state.players.find((p) => p.id === party.playerId) : undefined;
+      return player?.name ?? 'a missing player';
+    }
+  }
+}
+
+function describeAmount(state: GameState, amount: Amount): string {
+  const percent = typeof amount === 'string' ? /^percentOfCash\(\s*(\d+(?:\.\d+)?)\s*\)$/.exec(amount.trim()) : null;
+  if (percent) return `${percent[1]}% of cash`;
+  return String(evalAmount(amount, state.turn?.lastRoll ?? [], 0) ?? amount);
+}
+
+/** A number, `dice`, `dice * N` or `percentOfCash(N)` (of `payerCash`), rounded up; null if not understood. */
+function evalAmount(amount: Amount, lastRoll: number[], payerCash: number): number | null {
+  if (typeof amount === 'number') return Number.isFinite(amount) ? amount : null;
+  const expr = amount.trim();
+  const dice = /^dice(?:\s*\*\s*(\d+(?:\.\d+)?))?$/.exec(expr);
+  if (dice) return roundUp(sum(lastRoll) * Number(dice[1] ?? 1));
+  const percent = /^percentOfCash\(\s*(\d+(?:\.\d+)?)\s*\)$/.exec(expr);
+  if (percent) return roundUp((payerCash * Number(percent[1])) / 100);
+  return null;
+}
+
+/** The Player before (-1) or after (1) `playerId` in turn order who is still in the game. */
+function neighbour(state: GameState, playerId: string, direction: 1 | -1): Player {
+  const size = state.players.length;
+  const index = state.players.findIndex((p) => p.id === playerId);
+  for (let step = 1; step <= size; step++) {
+    const candidate = state.players[(((index + direction * step) % size) + size) % size]!;
+    if (!candidate.bankrupt) return candidate;
+  }
+  return state.players[index]!;
+}
+
+/**
+ * Who a selector names right now, or null when a named Player is bankrupt or gone (or a
+ * `drawerChoice` / `random` was never bound to a Player). `richest` and `poorest` may be the
+ * drawer; ties go to the earlier Player in turn order.
+ */
+function resolveParty(state: GameState, selector: PartySelector, drawerId: string): Creditor[] | null {
+  const players = (ps: Player[]): Creditor[] => ps.map((p) => ({ type: 'player', playerId: p.id }));
+  const active = activePlayers(state);
+  if (typeof selector === 'object') {
+    const named = active.find((p) => p.id === selector.player);
+    return named ? players([named]) : null;
+  }
+  switch (selector) {
+    case 'drawer':
+      return players([findPlayer(state, drawerId)]);
+    case 'bank':
+      return [{ type: 'bank' }];
+    case 'allOthers':
+      return players(active.filter((p) => p.id !== drawerId));
+    case 'everyone':
+      return players(active);
+    case 'richest':
+      return players([[...active].sort((a, b) => b.cash - a.cash)[0]!]);
+    case 'poorest':
+      return players([[...active].sort((a, b) => a.cash - b.cash)[0]!]);
+    case 'left':
+      return players([neighbour(state, drawerId, 1)]);
+    case 'right':
+      return players([neighbour(state, drawerId, -1)]);
+    default:
+      return null;
+  }
+}
+
+function mapSelectors(effect: Effect, fn: (selector: PartySelector) => PartySelector): Effect {
+  switch (effect.type) {
+    case 'TRANSFER':
+      return { ...effect, from: fn(effect.from), to: fn(effect.to) };
+    case 'GET_OUT_OF_JAIL':
+    case 'MANUAL':
+      return effect;
+    default:
+      return { ...effect, target: fn(effect.target ?? 'drawer') };
+  }
+}
+
+/** Whether the card must be continued by the Host rather than the drawer. */
+function isManual(card: ActiveCard): boolean {
+  return card.remaining.some((e) => e.type === 'MANUAL');
+}
+
+/**
+ * The drawer (or, for a MANUAL card, the Host) dismisses the revealed card and its Effects resolve.
+ * `drawerChoice` is bound to the Player picked now and `random` to a random other Player, so the
+ * rest of the card resolves without more input.
+ */
+function continueCardAction(
+  state: GameState,
+  action: Extract<Action, { type: 'CONTINUE_CARD' }>,
+  rules: Rules,
+  rng: Rng,
+  events: GameEvent[],
+): GameState {
+  const turn = state.turn;
+  const card = turn?.cards[turn.cards.length - 1];
+  if (state.phase !== 'playing' || !turn || turn.step !== 'awaitCard' || !card) throw new IllegalActionError('There is no card to continue');
+  if (isManual(card)) {
+    if (action.playerId !== state.hostId) throw new IllegalActionError('Only the Host can continue a manual card');
+  } else if (action.playerId !== turn.playerId) {
+    throw new IllegalActionError('Only the Player who drew the card can continue');
+  }
+
+  let needsChoice = false;
+  for (const effect of card.remaining) {
+    mapSelectors(effect, (s) => {
+      needsChoice ||= s === 'drawerChoice';
+      return s;
+    });
+  }
+  const choice = state.players.find((p) => p.id === action.choiceId);
+  if (needsChoice && (!choice || choice.bankrupt)) throw new IllegalActionError('Pick a Player for this card');
+
+  const others = activePlayers(state).filter((p) => p.id !== turn.playerId);
+  const bind = (selector: PartySelector): PartySelector => {
+    if (selector === 'drawerChoice') return { player: choice!.id };
+    if (selector === 'random') return { player: others.length > 0 ? others[rng.int(others.length)]!.id : '' };
+    return selector;
+  };
+  const bound: ActiveCard = { ...card, remaining: card.remaining.map((e) => mapSelectors(e, bind)) };
+  events.push({ type: 'CARD_CONTINUED', playerId: action.playerId, ...(needsChoice ? { choiceId: choice!.id } : {}) });
+  const next = { ...state, turn: { ...turn, cards: [...turn.cards.slice(0, -1), bound] } };
+  return continueCard(next, rules, events);
+}
+
+/** Carries on with the Effects of the card on top of the stack; a finished card is removed. */
+function continueCard(state: GameState, rules: Rules, events: GameEvent[]): GameState {
+  const turn = state.turn!;
+  const card = turn.cards[turn.cards.length - 1]!;
+  const [effect, ...remaining] = card.remaining;
+  if (!effect) return landingResolved({ ...state, turn: { ...turn, cards: turn.cards.slice(0, -1) } }, rules, events);
+  const next = { ...state, turn: { ...turn, cards: [...turn.cards.slice(0, -1), { ...card, remaining }] } };
+  return runEffect(next, effect, rules, events);
+}
+
+/** Carries on with a card in progress, if any, after something else in its Effect finished. */
+function resumeCards(state: GameState, rules: Rules, events: GameEvent[]): GameState {
+  return state.turn!.cards.length > 0 ? continueCard(state, rules, events) : state;
+}
+
+function skipEffect(state: GameState, effect: Effect, reason: SkipReason, events: GameEvent[]): void {
+  events.push({ type: 'CARD_EFFECT_SKIPPED', playerId: state.turn!.playerId, effect: effect.type, reason });
+}
+
+/** The Players an Effect's `target` names, logging a skip for a bankrupt or missing one or a bank. */
+function targetPlayers(state: GameState, effect: Effect & { target?: PartySelector }, events: GameEvent[]): Player[] {
+  const parties = resolveParty(state, effect.target ?? 'drawer', state.turn!.playerId);
+  if (!parties) {
+    skipEffect(state, effect, 'playerGone', events);
+    return [];
+  }
+  if (parties.some((p) => p.type === 'bank')) skipEffect(state, effect, 'badTarget', events);
+  return parties.flatMap((p) => (p.type === 'player' ? [findPlayer(state, p.playerId)] : []));
+}
+
+function runEffect(state: GameState, effect: Effect, rules: Rules, events: GameEvent[]): GameState {
+  const drawerId = state.turn!.playerId;
+  const done = (s: GameState) => continueCard(s, rules, events);
+  switch (effect.type) {
+    case 'MANUAL':
+      return done(state);
+
+    case 'TRANSFER':
+      return transfer(state, effect, rules, events);
+
+    case 'MOVE_TO':
+    case 'MOVE_RELATIVE':
+    case 'MOVE_TO_NEAREST':
+      return move(state, effect, rules, events);
+
+    case 'GO_TO_JAIL': {
+      let next = state;
+      for (const target of targetPlayers(state, effect, events)) next = sendToJail(next, target.id, 'card', events);
+      return done(next);
+    }
+
+    case 'GET_OUT_OF_JAIL': {
+      const card = state.turn!.cards[state.turn!.cards.length - 1]!;
+      const deck = state.decks[card.deck];
+      const at = deck.drawPile.lastIndexOf(card.cardId);
+      const decks = at < 0 ? state.decks : { ...state.decks, [card.deck]: { ...deck, drawPile: deck.drawPile.filter((_, i) => i !== at) } };
+      events.push({ type: 'CARD_KEPT', playerId: drawerId, cardId: card.cardId });
+      return done(giveCards({ ...state, decks }, drawerId, [card.cardId]));
+    }
+
+    case 'REPAIRS': {
+      const debts: Debt[] = [];
+      for (const target of targetPlayers(state, effect, events)) {
+        const buildings = Object.values(state.deeds)
+          .filter((d) => d.ownerId === target.id)
+          .map((d) => d.buildings);
+        const hotels = buildings.filter((b) => b === HOTEL).length;
+        const houses = sum(buildings.filter((b) => b !== HOTEL));
+        const amount = effect.perHouse * houses + effect.perHotel * hotels;
+        if (amount <= 0) continue;
+        events.push({ type: 'REPAIRS_PAID', playerId: target.id, amount, houses, hotels });
+        debts.push({ debtorId: target.id, creditor: { type: 'bank' }, amount, feedsJackpot: false });
+      }
+      return debts.length > 0 ? chargeAll(state, debts, 'landingResolved', rules, events) : done(state);
+    }
+
+    case 'SKIP_TURNS': {
+      const targets = targetPlayers(state, effect, events).map((p) => p.id);
+      for (const id of targets) events.push({ type: 'SKIP_TURNS_SET', playerId: id, count: effect.count });
+      const next = state.players.map((p) => (targets.includes(p.id) ? { ...p, skipTurns: p.skipTurns + effect.count } : p));
+      return done({ ...state, players: next });
+    }
+
+    case 'EXTRA_TURN': {
+      const targets = targetPlayers(state, effect, events).map((p) => p.id);
+      for (const id of targets) events.push({ type: 'EXTRA_TURN_GRANTED', playerId: id });
+      return done({ ...state, extraTurns: [...state.extraTurns, ...targets] });
+    }
+
+    case 'SWAP_POSITION': {
+      let next = state;
+      let moved = false;
+      for (const target of targetPlayers(state, effect, events)) {
+        if (target.id === drawerId) {
+          skipEffect(state, effect, 'badTarget', events);
+        } else if (target.inJail || findPlayer(next, drawerId).inJail) {
+          skipEffect(state, effect, 'inJail', events);
+        } else {
+          const mine = findPlayer(next, drawerId).position;
+          events.push({ type: 'POSITIONS_SWAPPED', playerId: drawerId, otherId: target.id });
+          next = updatePlayer(updatePlayer(next, drawerId, (p) => ({ ...p, position: target.position })), target.id, (p) => ({ ...p, position: mine }));
+          moved = true;
+        }
+      }
+      return moved ? land(next, drawerId, rules, events) : done(next);
+    }
+  }
+}
+
+/** A Transfer: one Debt for each paying Player and receiver pair (the bank pays out of nothing). */
+function transfer(state: GameState, effect: Extract<Effect, { type: 'TRANSFER' }>, rules: Rules, events: GameEvent[]): GameState {
+  const drawerId = state.turn!.playerId;
+  const froms = resolveParty(state, effect.from, drawerId);
+  const tos = resolveParty(state, effect.to, drawerId);
+  if (!froms || !tos) {
+    skipEffect(state, effect, 'playerGone', events);
+    return continueCard(state, rules, events);
+  }
+
+  let next = state;
+  const debts: Debt[] = [];
+  for (const from of froms) {
+    for (const to of tos) {
+      if (from.type === 'bank' && to.type === 'bank') continue;
+      if (from.type === 'player' && to.type === 'player' && from.playerId === to.playerId) {
+        skipEffect(state, effect, 'selfTransfer', events);
+        continue;
+      }
+      const payerCash = from.type === 'player' ? findPlayer(next, from.playerId).cash : 0;
+      const amount = evalAmount(effect.amount, state.turn!.lastRoll, payerCash);
+      if (amount === null) {
+        skipEffect(state, effect, 'badAmount', events);
+        continue;
+      }
+      if (amount <= 0) continue;
+      events.push({ type: 'CARD_TRANSFER', from, to, amount });
+      if (from.type === 'bank') {
+        if (to.type === 'player') next = adjustCash(next, to.playerId, amount);
+      } else {
+        debts.push({ debtorId: from.playerId, creditor: to, amount, feedsJackpot: to.type === 'bank' });
+      }
+    }
+  }
+  return debts.length > 0 ? chargeAll(next, debts, 'landingResolved', rules, events) : continueCard(next, rules, events);
+}
+
+/**
+ * A card move. Everything it names moves (a jailed Player stays put), but only the drawer lands:
+ * their new space is resolved, with `rentRule` for a nearest station or utility.
+ */
+function move(
+  state: GameState,
+  effect: Extract<Effect, { type: 'MOVE_TO' | 'MOVE_RELATIVE' | 'MOVE_TO_NEAREST' }>,
+  rules: Rules,
+  events: GameEvent[],
+): GameState {
+  const drawerId = state.turn!.playerId;
+  const size = state.board.length;
+  let next = state;
+  let drawerMoved = false;
+  for (const target of targetPlayers(state, effect, events)) {
+    if (target.inJail) {
+      skipEffect(state, effect, 'inJail', events);
+      continue;
+    }
+    const position = findPlayer(next, target.id).position;
+    if (effect.type === 'MOVE_RELATIVE') {
+      next =
+        effect.steps >= 0
+          ? moveForward(next, target.id, effect.steps, rules, events)
+          : moveBack(next, target.id, -effect.steps, events);
+    } else if (effect.type === 'MOVE_TO') {
+      if (!state.board[effect.index]) {
+        skipEffect(state, effect, 'noSuchSpace', events);
+        continue;
+      }
+      const steps = (effect.index - position + size) % size;
+      next = moveForward(next, target.id, steps, rules, events, effect.collectGo);
+    } else {
+      const steps = Array.from({ length: size }, (_, i) => i + 1).find((k) => state.board[(position + k) % size]!.type === effect.kind);
+      if (steps === undefined) {
+        skipEffect(state, effect, 'noSuchSpace', events);
+        continue;
+      }
+      next = moveForward(next, target.id, steps, rules, events);
+    }
+    drawerMoved ||= target.id === drawerId;
+  }
+  if (!drawerMoved) return continueCard(next, rules, events);
+  const rentRule = effect.type === 'MOVE_TO_NEAREST' ? { rentMultiplier: effect.rentMultiplier, diceMultiplier: effect.diceMultiplier } : {};
+  return land(next, drawerId, rules, events, rentRule);
 }
 
 function sum(xs: number[]): number {

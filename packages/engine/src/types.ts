@@ -59,6 +59,76 @@ export type SpaceDefinition = {
   taxAmount?: number;
 };
 
+export type DeckKind = 'chance' | 'treasure';
+
+/** Who gives, receives or is targeted by an Effect. */
+export type PartySelector =
+  | 'drawer'
+  | 'bank'
+  | 'allOthers'
+  | 'everyone'
+  | 'drawerChoice'
+  | 'random'
+  | 'richest'
+  | 'poorest'
+  | 'left'
+  | 'right'
+  | { player: string };
+
+/** A number, or an expression: `dice`, `dice * 10` or `percentOfCash(10)` (of the payer's cash). */
+export type Amount = number | string;
+
+/** `target` defaults to the drawer. */
+export type Effect =
+  | { type: 'TRANSFER'; amount: Amount; from: PartySelector; to: PartySelector }
+  | { type: 'MOVE_TO'; index: number; collectGo: boolean; target?: PartySelector }
+  | { type: 'MOVE_RELATIVE'; steps: number; target?: PartySelector }
+  | {
+      type: 'MOVE_TO_NEAREST';
+      kind: 'station' | 'utility';
+      rentMultiplier?: number;
+      diceMultiplier?: number;
+      target?: PartySelector;
+    }
+  | { type: 'GO_TO_JAIL'; target?: PartySelector }
+  | { type: 'GET_OUT_OF_JAIL' }
+  | { type: 'REPAIRS'; perHouse: number; perHotel: number; target?: PartySelector }
+  | { type: 'SKIP_TURNS'; count: number; target?: PartySelector }
+  | { type: 'EXTRA_TURN'; target?: PartySelector }
+  | { type: 'SWAP_POSITION'; target?: PartySelector }
+  | { type: 'MANUAL' };
+
+/** `text` may use the {from}, {to} and {amount} placeholders. */
+export type Card = {
+  id: string;
+  deck: DeckKind;
+  title: string;
+  text: string;
+  effects: Effect[];
+  keepable: boolean;
+  enabled: boolean;
+  copies: number;
+};
+
+export type Deck = {
+  cards: Card[];
+  /** Card ids, top first; a card appears once per copy. Drawn cards go to the bottom. */
+  drawPile: string[];
+};
+
+export type Decks = Record<DeckKind, Deck>;
+
+/** A card being revealed and resolved during the active turn. */
+export type ActiveCard = {
+  cardId: string;
+  deck: DeckKind;
+  title: string;
+  /** With the placeholders filled in. */
+  text: string;
+  /** Effects still to resolve, in order. */
+  remaining: Effect[];
+};
+
 export type Player = {
   id: string;
   name: string;
@@ -72,6 +142,10 @@ export type Player = {
   hasPassedGo: boolean;
   /** Out of the game; their row stays in `players` so turn order is kept. */
   bankrupt: boolean;
+  /** Keepable cards (ids) held until used. */
+  heldCards: string[];
+  /** Turns still to miss. */
+  skipTurns: number;
 };
 
 /** Live ownership state of one property, kept separate from its Space definition. */
@@ -82,7 +156,13 @@ export type Deed = {
   mortgaged: boolean;
 };
 
-export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'auction' | 'awaitDebt' | 'awaitEndTurn';
+export type TurnStep =
+  | 'awaitRoll'
+  | 'awaitBuyDecision'
+  | 'auction'
+  | 'awaitDebt'
+  | 'awaitCard'
+  | 'awaitEndTurn';
 
 /** The other side of a Debt: one Player or the bank. */
 export type Creditor = { type: 'player'; playerId: string } | { type: 'bank' };
@@ -123,10 +203,19 @@ export type Turn = {
   round: number;
   /** Set while Debts are being settled. */
   afterDebts?: AfterDebts;
+  /**
+   * Cards being resolved, the one on top last. A card that moves the drawer onto another card
+   * space stacks a new card above it, and the first resumes once that one is done.
+   */
+  cards: ActiveCard[];
+  /** Set for an extra turn: the Player whose place in turn order this turn belongs to. */
+  resumeAfter?: string;
 };
 
-/** How a Player was sent to Jail; cards add their own reason in the cards ticket. */
-export type JailReason = 'goToJail' | 'doubles';
+export type JailReason = 'goToJail' | 'doubles' | 'card';
+
+/** Why part of a Card was not carried out. */
+export type SkipReason = 'selfTransfer' | 'playerGone' | 'badTarget' | 'badAmount' | 'noSuchSpace' | 'inJail';
 
 export type RollOffRoll = { playerId: string; dice: number[]; total: number };
 
@@ -164,6 +253,18 @@ export type GameEvent =
   | { type: 'PROPERTY_MORTGAGED'; playerId: string; index: number; amount: number }
   | { type: 'PROPERTY_UNMORTGAGED'; playerId: string; index: number; cost: number }
   | { type: 'TURN_ENDED'; playerId: string }
+  | { type: 'CARD_DRAWN'; playerId: string; deck: DeckKind; cardId: string; title: string; text: string }
+  | { type: 'DECK_EMPTY'; playerId: string; deck: DeckKind }
+  | { type: 'CARD_CONTINUED'; playerId: string; choiceId?: string }
+  | { type: 'CARD_TRANSFER'; from: Creditor; to: Creditor; amount: number }
+  | { type: 'CARD_EFFECT_SKIPPED'; playerId: string; effect: Effect['type']; reason: SkipReason }
+  | { type: 'CARD_KEPT'; playerId: string; cardId: string }
+  | { type: 'JAIL_CARD_USED'; playerId: string; cardId: string }
+  | { type: 'REPAIRS_PAID'; playerId: string; amount: number; houses: number; hotels: number }
+  | { type: 'SKIP_TURNS_SET'; playerId: string; count: number }
+  | { type: 'TURN_SKIPPED'; playerId: string }
+  | { type: 'EXTRA_TURN_GRANTED'; playerId: string }
+  | { type: 'POSITIONS_SWAPPED'; playerId: string; otherId: string }
   | { type: 'DEBT_OWED'; debtorId: string; creditor: Creditor; amount: number }
   | { type: 'DEBT_PAID'; debtorId: string; creditor: Creditor; amount: number }
   | { type: 'BANKRUPT'; playerId: string; creditor: Creditor }
@@ -196,6 +297,9 @@ export type GameState = {
    * those Auctions run, so closing one knows to start the next instead of ending a landing.
    */
   auctionQueue?: number[];
+  /** Players owed an extra turn by a card, in order; each plays right after the current turn. */
+  extraTurns: string[];
+  decks: Decks;
   /** `jackpot` only fills while freeParkingMode is 'jackpot'. */
   bank: { jackpot: number };
   log: LogEntry[];
@@ -206,6 +310,9 @@ export type Action =
   | { type: 'START_GAME'; playerId: string }
   | { type: 'ROLL_DICE'; playerId: string }
   | { type: 'PAY_JAIL_FINE'; playerId: string }
+  | { type: 'USE_JAIL_CARD'; playerId: string }
+  /** The drawer, or the Host for a MANUAL card. `choiceId` answers a `drawerChoice` selector. */
+  | { type: 'CONTINUE_CARD'; playerId: string; choiceId?: string }
   | { type: 'BUY_PROPERTY'; playerId: string }
   | { type: 'DECLINE_PROPERTY'; playerId: string }
   | { type: 'PLACE_BID'; playerId: string; amount: number }

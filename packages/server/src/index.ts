@@ -85,6 +85,7 @@ io.on('connection', (socket: GameSocket) => {
     'START_GAME',
     'ROLL_DICE',
     'PAY_JAIL_FINE',
+    'USE_JAIL_CARD',
     'BUY_PROPERTY',
     'DECLINE_PROPERTY',
     'PASS_AUCTION',
@@ -108,6 +109,16 @@ io.on('connection', (socket: GameSocket) => {
     handle(ack, () => {
       const { roomCode, playerId } = requirePlayer(socket);
       broadcast(roomCode, rooms.act(roomCode, { type: 'PLACE_BID', playerId, amount: Number(msg?.amount) }));
+      return {};
+    }),
+  );
+
+  // The engine validates who may continue the card and that `choiceId` names a Player in the game.
+  socket.on('CONTINUE_CARD', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      const choiceId = typeof msg?.choiceId === 'string' ? msg.choiceId : undefined;
+      broadcast(roomCode, rooms.act(roomCode, { type: 'CONTINUE_CARD', playerId, choiceId }));
       return {};
     }),
   );

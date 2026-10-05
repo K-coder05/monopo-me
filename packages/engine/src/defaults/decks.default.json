@@ -1,0 +1,509 @@
+{
+  "chance": [
+    {
+      "id": "ch-01",
+      "deck": "chance",
+      "title": "Straight to the start",
+      "text": "Head to GO and collect your salary.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 0,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-02",
+      "deck": "chance",
+      "title": "Scenic route",
+      "text": "Travel on to Red 3. Collect your salary if you pass GO.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 24,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-03",
+      "deck": "chance",
+      "title": "Pink promenade",
+      "text": "Travel on to Pink 1. Collect your salary if you pass GO.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 11,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-04",
+      "deck": "chance",
+      "title": "Top of the board",
+      "text": "Travel on to Dark Blue 2.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 39,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-05",
+      "deck": "chance",
+      "title": "All aboard",
+      "text": "Take the train to Station 1. Collect your salary if you pass GO.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 5,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-06",
+      "deck": "chance",
+      "title": "Next stop",
+      "text": "Ride to the nearest station. If it has an owner, pay them double the usual rent.",
+      "effects": [
+        {
+          "type": "MOVE_TO_NEAREST",
+          "kind": "station",
+          "rentMultiplier": 2
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 2
+    },
+    {
+      "id": "ch-07",
+      "deck": "chance",
+      "title": "Power up",
+      "text": "Head to the nearest utility. If it has an owner, pay them ten times your last dice roll.",
+      "effects": [
+        {
+          "type": "MOVE_TO_NEAREST",
+          "kind": "utility",
+          "diceMultiplier": 10
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-08",
+      "deck": "chance",
+      "title": "Reverse gear",
+      "text": "Step back three spaces.",
+      "effects": [
+        {
+          "type": "MOVE_RELATIVE",
+          "steps": -3
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-09",
+      "deck": "chance",
+      "title": "Caught red-handed",
+      "text": "Go directly to Jail. Do not pass GO and do not collect your salary.",
+      "effects": [
+        {
+          "type": "GO_TO_JAIL"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-10",
+      "deck": "chance",
+      "title": "Free pass",
+      "text": "Keep this card until you need it to leave Jail for free.",
+      "effects": [
+        {
+          "type": "GET_OUT_OF_JAIL"
+        }
+      ],
+      "keepable": true,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-11",
+      "deck": "chance",
+      "title": "Dividend day",
+      "text": "The bank pays you a dividend of {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 50,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-12",
+      "deck": "chance",
+      "title": "Loan comes due",
+      "text": "An old loan matures and you collect {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 150,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-13",
+      "deck": "chance",
+      "title": "Lead foot",
+      "text": "Pay {amount} for driving too fast.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 15,
+          "from": "drawer",
+          "to": "bank"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-14",
+      "deck": "chance",
+      "title": "Chair's round",
+      "text": "You are elected chair and buy everyone a round. Pay each player {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 50,
+          "from": "drawer",
+          "to": "allOthers"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "ch-15",
+      "deck": "chance",
+      "title": "Property upkeep",
+      "text": "Pay for repairs: 25 for each house and 100 for each hotel you own.",
+      "effects": [
+        {
+          "type": "REPAIRS",
+          "perHouse": 25,
+          "perHotel": 100
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    }
+  ],
+  "treasure": [
+    {
+      "id": "tr-01",
+      "deck": "treasure",
+      "title": "Rise and shine",
+      "text": "Head to GO and collect your salary.",
+      "effects": [
+        {
+          "type": "MOVE_TO",
+          "index": 0,
+          "collectGo": true
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-02",
+      "deck": "treasure",
+      "title": "Counting error",
+      "text": "The bank miscounted in your favour. Collect {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 200,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-03",
+      "deck": "treasure",
+      "title": "Medical bill",
+      "text": "Pay {amount} for a doctor's visit.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 50,
+          "from": "drawer",
+          "to": "bank"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-04",
+      "deck": "treasure",
+      "title": "Shares sold",
+      "text": "You sell some shares and collect {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 50,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-05",
+      "deck": "treasure",
+      "title": "Get-out card",
+      "text": "Keep this card until you need it to leave Jail for free.",
+      "effects": [
+        {
+          "type": "GET_OUT_OF_JAIL"
+        }
+      ],
+      "keepable": true,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-06",
+      "deck": "treasure",
+      "title": "Behind bars",
+      "text": "Go directly to Jail. Do not pass GO and do not collect your salary.",
+      "effects": [
+        {
+          "type": "GO_TO_JAIL"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-07",
+      "deck": "treasure",
+      "title": "Savings payout",
+      "text": "Your holiday fund matures. Collect {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 100,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-08",
+      "deck": "treasure",
+      "title": "Overpaid taxes",
+      "text": "You are due a tax refund of {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 20,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-09",
+      "deck": "treasure",
+      "title": "Party time",
+      "text": "It is your birthday. Every other player gives you {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 10,
+          "from": "allOthers",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-10",
+      "deck": "treasure",
+      "title": "Policy payout",
+      "text": "Your life insurance matures. Collect {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 100,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-11",
+      "deck": "treasure",
+      "title": "Ward fees",
+      "text": "Pay {amount} in hospital fees.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 100,
+          "from": "drawer",
+          "to": "bank"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-12",
+      "deck": "treasure",
+      "title": "Tuition due",
+      "text": "Pay {amount} in school fees.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 50,
+          "from": "drawer",
+          "to": "bank"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-13",
+      "deck": "treasure",
+      "title": "Advice pays",
+      "text": "You earn {amount} for some consulting.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 25,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-14",
+      "deck": "treasure",
+      "title": "Road works",
+      "text": "Pay for street repairs: 40 for each house and 115 for each hotel you own.",
+      "effects": [
+        {
+          "type": "REPAIRS",
+          "perHouse": 40,
+          "perHotel": 115
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-15",
+      "deck": "treasure",
+      "title": "Runner-up",
+      "text": "You place second in a contest and win {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 10,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    },
+    {
+      "id": "tr-16",
+      "deck": "treasure",
+      "title": "Windfall",
+      "text": "A relative leaves you {amount}.",
+      "effects": [
+        {
+          "type": "TRANSFER",
+          "amount": 100,
+          "from": "bank",
+          "to": "drawer"
+        }
+      ],
+      "keepable": false,
+      "enabled": true,
+      "copies": 1
+    }
+  ]
+}
