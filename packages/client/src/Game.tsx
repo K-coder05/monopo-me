@@ -15,6 +15,7 @@ import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
 import { RulesPanel } from './RulesPanel';
 import { CardsPanel } from './CardsPanel';
+import { PresetsPanel } from './PresetsPanel';
 import { AuctionModal } from './AuctionModal';
 import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
@@ -37,6 +38,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const [building, setBuilding] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const closeDeed = useCallback(() => setSelected(null), []);
   const closeBuilder = useCallback(() => setBuilding(false), []);
   const turn = game.turn!;
@@ -131,6 +133,11 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
           <button className="secondary" onClick={() => setCardsOpen(true)}>
             Cards
           </button>
+          {me === game.hostId && (
+            <button className="secondary" onClick={() => setPresetsOpen(true)}>
+              Presets
+            </button>
+          )}
         </div>
         {game.rulesChangedMidGame && <p className="banner">Rules changed during this game. Open Rules to see the current values.</p>}
         {game.pendingEdit && <p className="notice">Rules changes will apply when the current action finishes.</p>}
@@ -252,6 +259,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
 
       {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
       {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
+      {presetsOpen && <PresetsPanel game={game} onClose={() => setPresetsOpen(false)} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

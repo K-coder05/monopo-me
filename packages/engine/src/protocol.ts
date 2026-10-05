@@ -1,4 +1,4 @@
-import type { CardDraft, DeckKind, GameEvent, GameState, HeldCardChoice, Rules, SpaceEdit, TradeSide } from './types';
+import type { CardDraft, DeckKind, GameEvent, GameState, HeldCardChoice, Preset, Rules, SpaceEdit, TradeSide } from './types';
 
 /** Socket messages shared by server and client. */
 
@@ -57,6 +57,16 @@ export type ClientToServer = {
   RESET_DECK: (msg: { deck: DeckKind }, ack: Ack) => void;
   SHUFFLE_DECK: (msg: { deck: DeckKind }, ack: Ack) => void;
   HIDE_DECK_CONTENTS: (msg: { hidden: boolean }, ack: Ack) => void;
+  // Presets, Host only. Saved Presets are shared by every Room on the server.
+  LIST_PRESETS: (msg: object, ack: Ack<{ names: string[] }>) => void;
+  /** Saves the Room's current Rules, Board and Decks under `name`, replacing any Preset with that name. */
+  SAVE_PRESET: (msg: { name: string }, ack: Ack) => void;
+  /** Rules and Board wait for a running Auction, Debt or Card; the Decks change at once. */
+  LOAD_PRESET: (msg: { name: string }, ack: Ack) => void;
+  /** The saved Preset, to download as a file. */
+  EXPORT_PRESET: (msg: { name: string }, ack: Ack<{ preset: Preset }>) => void;
+  /** Saves a Preset read from a file, replacing any with the same name; the server checks every value. */
+  IMPORT_PRESET: (msg: { preset: Preset }, ack: Ack<{ name: string }>) => void;
 };
 
 export type ServerToClient = {

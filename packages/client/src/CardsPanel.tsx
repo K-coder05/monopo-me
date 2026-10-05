@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { HELD_CHOICE_NEEDED, type Card, type CardDraft, type DeckKind, type Effect, type GameState, type HeldCardChoice, type PartySelector } from '@landlord/engine';
+import { HELD_CHOICE_NEEDED, missingPlayers, type Card, type CardDraft, type DeckKind, type Effect, type GameState, type HeldCardChoice, type PartySelector } from '@landlord/engine';
 import { addCard, deleteCard, editCard, hideDeckContents, resetDeck, shuffleDeck } from './socket';
 import {
   blankCard,
   DECK_LABELS,
   EFFECT_LABELS,
+  missingLabel,
   newEffect,
   previewText,
   SELECTOR_LABELS,
@@ -153,6 +154,12 @@ export function CardsPanel({ game, me, onClose }: { game: GameState; me: string;
                   </label>
                 </div>
                 <p>{card.text}</p>
+                {card.enabled && missingPlayers(card).length > 0 && (
+                  <p className="notice">
+                    Names {[...new Set(missingPlayers(card))].join(' and ')}, not in this Room. It won&apos;t be drawn until the Host picks a
+                    Player for it or turns it off.
+                  </p>
+                )}
                 <ul className="muted effect-summary">
                   {card.effects.map((effect, i) => (
                     <li key={i}>{summarizeEffect(effect, game)}</li>
@@ -298,6 +305,7 @@ function PartySelect({
             {p.name}
           </option>
         ))}
+        {typeof value === 'object' && 'playerName' in value && <option value={selectorKey(value)}>{missingLabel(value.playerName)}</option>}
       </select>
     </label>
   );

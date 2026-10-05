@@ -4,6 +4,7 @@ import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import {
   IllegalActionError,
+  toPreset,
   viewFor,
   type Ack,
   type ActionResult,
@@ -14,10 +15,12 @@ import {
   type TradeSide,
   type ServerToClient,
 } from '@landlord/engine';
+import { Presets } from './presets';
 import { Rooms } from './rooms';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data', 'rooms');
+const PRESETS_DIR = process.env.PRESETS_DIR ?? join(process.cwd(), 'data', 'presets');
 
 /** The one Player this connection controls (ADR 0001). */
 type SocketData = { player?: JoinedRoom };
@@ -27,6 +30,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server<ClientToServer, ServerToClient, Record<string, never>, SocketData>(httpServer);
 const rooms = new Rooms(broadcast, undefined, undefined, DATA_DIR);
+const presets = new Presets(PRESETS_DIR);
 setInterval(() => rooms.expireIdle(), 60 * 60 * 1000).unref();
 
 app.get('/health', (_req, res) => {
@@ -61,6 +65,13 @@ function handle<T extends object>(ack: Ack<T> | undefined, fn: () => T) {
 function requirePlayer(socket: GameSocket): JoinedRoom {
   const player = socket.data.player;
   if (!player) throw new IllegalActionError('Join a Room first');
+  return player;
+}
+
+/** For server-side Host powers the engine never sees, such as reading and writing saved Presets. */
+function requireHost(socket: GameSocket): JoinedRoom {
+  const player = requirePlayer(socket);
+  if (rooms.get(player.roomCode)?.hostId !== player.playerId) throw new IllegalActionError('Only the Host can do that');
   return player;
 }
 
@@ -211,6 +222,45 @@ io.on('connection', (socket: GameSocket) => {
       const { roomCode, playerId } = requirePlayer(socket);
       broadcast(roomCode, rooms.act(roomCode, { type: 'HIDE_DECK_CONTENTS', playerId, hidden: msg?.hidden }));
       return {};
+    }),
+  );
+
+  // Presets live on the server, outside any Room; the engine checks every value on save, import and load.
+  socket.on('LIST_PRESETS', (_msg, ack) =>
+    handle(ack, () => {
+      requireHost(socket);
+      return { names: presets.list() };
+    }),
+  );
+
+  socket.on('SAVE_PRESET', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode } = requireHost(socket);
+      presets.save(toPreset(rooms.get(roomCode)!, msg?.name));
+      return {};
+    }),
+  );
+
+  socket.on('LOAD_PRESET', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requireHost(socket);
+      const preset = presets.get(String(msg?.name ?? ''));
+      broadcast(roomCode, rooms.act(roomCode, { type: 'LOAD_PRESET', playerId, preset }));
+      return {};
+    }),
+  );
+
+  socket.on('EXPORT_PRESET', (msg, ack) =>
+    handle(ack, () => {
+      requireHost(socket);
+      return { preset: presets.get(String(msg?.name ?? '')) };
+    }),
+  );
+
+  socket.on('IMPORT_PRESET', (msg, ack) =>
+    handle(ack, () => {
+      requireHost(socket);
+      return { name: presets.save(msg?.preset).name };
     }),
   );
 

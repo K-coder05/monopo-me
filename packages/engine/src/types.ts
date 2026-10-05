@@ -71,6 +71,8 @@ export type PendingEdit = {
   board: Record<number, Partial<Pick<SpaceDefinition, SpaceField>>>;
   /** The edit is a reset to the Defaults, so applying it is logged as one. */
   reset?: boolean;
+  /** The edit is this Preset's Rules and Board, so applying it later is logged as one. */
+  preset?: string;
 };
 
 export type DeckKind = 'chance' | 'treasure';
@@ -87,7 +89,13 @@ export type PartySelector =
   | 'poorest'
   | 'left'
   | 'right'
-  | { player: string };
+  | { player: string }
+  /**
+   * A Player named by display name. Presets store named Players this way; in a Room it marks a
+   * card loaded from a Preset whose Player is missing, which cannot be drawn until the Host
+   * picks a Player for it or disables it.
+   */
+  | { playerName: string };
 
 /** A number, or an expression: `dice`, `dice * 10` or `percentOfCash(10)` (of the payer's cash). */
 export type Amount = number | string;
@@ -132,6 +140,12 @@ export type CardDraft = Pick<Card, 'title' | 'text' | 'effects' | 'enabled' | 'c
  * lose them now. Required only when the edit touches a held card.
  */
 export type HeldCardChoice = 'keep' | 'remove';
+
+/** Rules as a Preset stores them: every key the Host can edit. */
+export type PresetRules = Omit<Rules, 'minPlayers' | 'maxPlayers'>;
+
+/** A named copy of Rules, Board and both Decks' cards. Named Players are stored as `{ playerName }`. */
+export type Preset = { name: string; rules: PresetRules; board: SpaceDefinition[]; cards: Card[] };
 
 export type Deck = {
   cards: Card[];
@@ -328,7 +342,11 @@ export type GameEvent =
   | { type: 'HELD_CARD_REMOVED'; playerId: string; cardId: string; title: string }
   | { type: 'DECK_RESET'; deck: DeckKind }
   | { type: 'DECK_SHUFFLED'; deck: DeckKind }
-  | { type: 'DECK_CONTENTS_HIDDEN'; hidden: boolean };
+  | { type: 'DECK_CONTENTS_HIDDEN'; hidden: boolean }
+  /** Both Decks are replaced at once; the Rules and Board follow as RULE_CHANGED / SPACE_CHANGED. */
+  | { type: 'PRESET_LOADED'; name: string; flaggedCards: number }
+  /** A Preset's Rules and Board, queued behind an Auction, Debt or Card, now apply. */
+  | { type: 'PRESET_APPLIED'; name: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
@@ -414,7 +432,9 @@ export type Action =
   /** The built-in Default cards for one Deck, freshly shuffled. */
   | { type: 'RESET_DECK'; playerId: string; deck: DeckKind }
   | { type: 'SHUFFLE_DECK'; playerId: string; deck: DeckKind }
-  | { type: 'HIDE_DECK_CONTENTS'; playerId: string; hidden: boolean };
+  | { type: 'HIDE_DECK_CONTENTS'; playerId: string; hidden: boolean }
+  /** Host only. The Rules and Board wait like any Rules edit; the Decks are replaced at once. */
+  | { type: 'LOAD_PRESET'; playerId: string; preset: Preset };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

@@ -2,7 +2,7 @@ import type { Amount, CardDraft, DeckKind, Effect, GameState, PartySelector } fr
 
 export const DECK_LABELS: Record<DeckKind, string> = { chance: 'Chance', treasure: 'Treasure' };
 
-type NamedSelector = Exclude<PartySelector, { player: string }>;
+type NamedSelector = Exclude<PartySelector, object>;
 
 export const SELECTOR_LABELS: Record<NamedSelector, string> = {
   drawer: 'the drawer',
@@ -80,13 +80,19 @@ export function newEffect(kind: Effect['type'] | Shortcut, previous?: Effect): E
 export const blankCard = (): CardDraft => ({ title: '', text: '', effects: [newEffect('collect')], enabled: true, copies: 1 });
 
 /** A selector as a value for a <select>, and back. */
-export const selectorKey = (s: PartySelector | undefined): string => (s === undefined ? 'drawer' : typeof s === 'object' ? `player:${s.player}` : s);
-export const selectorFromKey = (key: string): PartySelector => (key.startsWith('player:') ? { player: key.slice(7) } : (key as PartySelector));
+export const selectorKey = (s: PartySelector | undefined): string =>
+  s === undefined ? 'drawer' : typeof s !== 'object' ? s : 'player' in s ? `player:${s.player}` : `name:${s.playerName}`;
+export const selectorFromKey = (key: string): PartySelector =>
+  key.startsWith('player:') ? { player: key.slice(7) } : key.startsWith('name:') ? { playerName: key.slice(5) } : (key as PartySelector);
+
+/** A Player a card loaded from a Preset names, who was not in the Room. */
+export const missingLabel = (name: string) => `${name} (not in this Room)`;
 
 export function partyName(game: GameState, s: PartySelector | undefined): string {
   if (s === undefined) return SELECTOR_LABELS.drawer;
-  if (typeof s === 'object') return game.players.find((p) => p.id === s.player)?.name ?? 'a missing player';
-  return SELECTOR_LABELS[s];
+  if (typeof s !== 'object') return SELECTOR_LABELS[s];
+  if ('playerName' in s) return missingLabel(s.playerName);
+  return game.players.find((p) => p.id === s.player)?.name ?? 'a missing player';
 }
 
 const showAmount = (amount: Amount) => {

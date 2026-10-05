@@ -165,5 +165,13 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `Host shuffled the ${DECK_LABELS[event.deck]} deck`;
     case 'DECK_CONTENTS_HIDDEN':
       return event.hidden ? 'Host hid the deck contents' : 'Host made the deck contents visible';
+    case 'PRESET_LOADED':
+      return `Host loaded the Preset "${event.name}"${
+        event.flaggedCards > 0
+          ? `; ${event.flaggedCards} card${event.flaggedCards === 1 ? ' names a Player' : 's name Players'} not in this Room and won't be drawn until the Host picks someone`
+          : ''
+      }`;
+    case 'PRESET_APPLIED':
+      return `The Rules and Board from the Preset "${event.name}" now apply`;
   }
 }

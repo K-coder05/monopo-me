@@ -5,6 +5,7 @@ import type {
   ClientToServer,
   DeckKind,
   HeldCardChoice,
+  Preset,
   PropertyIntent,
   Rules,
   ServerToClient,
@@ -64,6 +65,11 @@ export type Intent =
 /** Resolves with the server's error message, or null if it was accepted. */
 function toError(resolve: (error: string | null) => void): Ack {
   return (result) => resolve(result.ok ? null : result.error);
+}
+
+/** Resolves with the server's reply, or its error message. */
+function toResult<T extends object>(resolve: (result: T | { error: string }) => void): Ack<T> {
+  return (result) => resolve(result.ok ? result : { error: result.error });
 }
 
 /** Sends an intent and resolves with the server's error message, or null if it was accepted. */
@@ -132,4 +138,29 @@ export function shuffleDeck(deck: DeckKind): Promise<string | null> {
 /** Host only: turns "hide deck contents" on or off. Resolves like `send`. */
 export function hideDeckContents(hidden: boolean): Promise<string | null> {
   return new Promise((resolve) => socket.emit('HIDE_DECK_CONTENTS', { hidden }, toError(resolve)));
+}
+
+/** Host only: names of the Presets saved on the server, or the server's error message. */
+export function listPresets(): Promise<{ names: string[] } | { error: string }> {
+  return new Promise((resolve) => socket.emit('LIST_PRESETS', {}, toResult(resolve)));
+}
+
+/** Host only: saves the Room's Rules, Board and Decks as a Preset. Resolves like `send`. */
+export function savePreset(name: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('SAVE_PRESET', { name }, toError(resolve)));
+}
+
+/** Host only: loads a saved Preset into the Room. Resolves like `send`. */
+export function loadPreset(name: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('LOAD_PRESET', { name }, toError(resolve)));
+}
+
+/** Host only: a saved Preset, to download, or the server's error message. */
+export function exportPreset(name: string): Promise<{ preset: Preset } | { error: string }> {
+  return new Promise((resolve) => socket.emit('EXPORT_PRESET', { name }, toResult(resolve)));
+}
+
+/** Host only: saves a Preset read from a file; resolves with its name, or the server's error message. */
+export function importPreset(preset: Preset): Promise<{ name: string } | { error: string }> {
+  return new Promise((resolve) => socket.emit('IMPORT_PRESET', { preset }, toResult(resolve)));
 }

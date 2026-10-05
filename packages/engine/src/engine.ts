@@ -1,6 +1,7 @@
 import { defaultBoard, defaultCards, defaultRules } from './defaults';
 import { addCard, copiesInPlay, deleteCard, editCard, hideDeckContents, resetDeck, shuffleDeck, wantedCopies } from './cardEdits';
 import { applyPending, resetToDefaults, updateBoard, updateRules } from './edits';
+import { loadPreset } from './presets';
 import type {
   Action,
   AfterDebts,
@@ -43,9 +44,12 @@ export const HOTEL = 5;
 
 export type NewPlayer = { id: string; name: string; color: string };
 
-/** A Deck's draw pile holds each enabled Card once per copy, in Card order (START_GAME shuffles it). */
+/**
+ * A Deck's draw pile holds each Card once per copy, in Card order (START_GAME shuffles it):
+ * none of a disabled Card or one naming a missing Player.
+ */
 export function buildDeck(cards: Card[]): Deck {
-  return { cards, drawPile: cards.filter((c) => c.enabled).flatMap((c) => Array<string>(Math.max(0, c.copies)).fill(c.id)) };
+  return { cards, drawPile: cards.flatMap((c) => Array<string>(Math.max(0, wantedCopies(c))).fill(c.id)) };
 }
 
 /** Fresh copies of the default Chance and Treasure Decks. */
@@ -185,10 +189,14 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'EDIT_CARD':
       next = editCard(state, action.playerId, action.cardId, action.card, action.held, rng, events);
       break;
+    case 'LOAD_PRESET':
+      next = loadPreset(state, action.playerId, action.preset, rng, events);
+      break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
   }
-  const isEdit = action.type === 'UPDATE_RULES' || action.type === 'UPDATE_BOARD' || action.type === 'RESET_TO_DEFAULTS';
+  const isEdit =
+    action.type === 'UPDATE_RULES' || action.type === 'UPDATE_BOARD' || action.type === 'RESET_TO_DEFAULTS' || action.type === 'LOAD_PRESET';
   next = applyPending(next, events, isEdit);
   return { state: appendLog(next, events), events };
 }
@@ -1309,7 +1317,7 @@ function resolveParty(state: GameState, selector: PartySelector, drawerId: strin
   const players = (ps: Player[]): Creditor[] => ps.map((p) => ({ type: 'player', playerId: p.id }));
   const active = activePlayers(state);
   if (typeof selector === 'object') {
-    const named = active.find((p) => p.id === selector.player);
+    const named = 'player' in selector ? active.find((p) => p.id === selector.player) : undefined;
     return named ? players([named]) : null;
   }
   switch (selector) {

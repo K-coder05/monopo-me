@@ -22,6 +22,8 @@ const HOST_EDITS: GameEvent['type'][] = [
   'DECK_RESET',
   'DECK_SHUFFLED',
   'DECK_CONTENTS_HIDDEN',
+  'PRESET_LOADED',
+  'PRESET_APPLIED',
 ];
 const isHostEdit = (e: GameEvent) => HOST_EDITS.includes(e.type);
 
@@ -40,8 +42,8 @@ export function App() {
   useEffect(() => {
     const onState = ({ state, events, serverNow, away }: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => {
       setGame(state);
-      // A reset is one toast, not one per value it changed.
-      const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED');
+      // A reset or Preset load is one toast, not one per value it changed.
+      const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED' || e.type === 'PRESET_LOADED' || e.type === 'PRESET_APPLIED');
       const fresh = events.filter((e) => isHostEdit(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
       if (fresh.length > 0) {
         setToasts((current) => [...current, ...fresh]);

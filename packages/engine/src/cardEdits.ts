@@ -21,13 +21,47 @@ function requireHost(state: GameState, playerId: string) {
   if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can change the cards');
 }
 
-function validParty(state: GameState, value: unknown, what: string, allowBank = true): PartySelector {
+/** What the Effects of a card being checked may refer to. */
+export type CardContext = {
+  boardSize: number;
+  /** Whether `{ player: id }` names a Player in the Room. */
+  hasPlayer: (id: string) => boolean;
+  /** Whether a `{ playerName }` selector may stay as it is. */
+  keepsName: (name: string) => boolean;
+};
+
+/** A card form in this Room may name its Players, and keep the missing names in `keptNames`. */
+function roomContext(state: GameState, keptNames: string[] = []): CardContext {
+  return {
+    boardSize: state.board.length,
+    hasPlayer: (id) => state.players.some((p) => p.id === id),
+    keepsName: (name) => keptNames.includes(name),
+  };
+}
+
+function validParty(ctx: CardContext, value: unknown, what: string, allowBank = true): PartySelector {
   if (typeof value === 'string' && SELECTORS.includes(value) && (allowBank || value !== 'bank')) return value as PartySelector;
-  if (isPlainObject(value) && typeof value.player === 'string' && state.players.some((p) => p.id === value.player)) {
-    return { player: value.player };
+  if (isPlainObject(value) && typeof value.player === 'string' && ctx.hasPlayer(value.player)) return { player: value.player };
+  if (isPlainObject(value) && typeof value.playerName === 'string' && ctx.keepsName(value.playerName)) {
+    return { playerName: value.playerName };
   }
   throw new IllegalActionError(`${what} must be a Player in the Room or one of the selectors`);
 }
+
+/** Every Party an Effect names. */
+const partiesOf = (effect: Effect): PartySelector[] =>
+  effect.type === 'TRANSFER' ? [effect.from, effect.to] : 'target' in effect && effect.target !== undefined ? [effect.target] : [];
+
+/** `effect` with each Party it names passed through `fn`. */
+export function mapParties(effect: Effect, fn: (party: PartySelector) => PartySelector): Effect {
+  if (effect.type === 'TRANSFER') return { ...effect, from: fn(effect.from), to: fn(effect.to) };
+  if ('target' in effect && effect.target !== undefined) return { ...effect, target: fn(effect.target) };
+  return effect;
+}
+
+/** The display names of Players a card names who were missing when it was loaded from a Preset. */
+export const missingPlayers = (card: Pick<Card, 'effects'>): string[] =>
+  card.effects.flatMap(partiesOf).flatMap((p) => (typeof p === 'object' && 'playerName' in p ? [p.playerName] : []));
 
 /** A whole number 0 or more, `dice`, `dice * N` or `percentOfCash(N)`. */
 function validAmount(value: unknown): number | string {
@@ -40,24 +74,25 @@ function validAmount(value: unknown): number | string {
 }
 
 /** Checks one Effect from an untrusted sender, keeping only the fields its type has. */
-function validEffect(state: GameState, raw: unknown): Effect {
+function validEffect(ctx: CardContext, raw: unknown): Effect {
   if (!isPlainObject(raw)) throw new IllegalActionError('Each effect must be an object');
+  const size = ctx.boardSize;
   const target = (): { target?: PartySelector } =>
-    raw.target === undefined ? {} : { target: validParty(state, raw.target, 'The target', false) };
+    raw.target === undefined ? {} : { target: validParty(ctx, raw.target, 'The target', false) };
   switch (raw.type) {
     case 'TRANSFER':
       return {
         type: 'TRANSFER',
         amount: validAmount(raw.amount),
-        from: validParty(state, raw.from, 'Who pays'),
-        to: validParty(state, raw.to, 'Who receives'),
+        from: validParty(ctx, raw.from, 'Who pays'),
+        to: validParty(ctx, raw.to, 'Who receives'),
       };
     case 'MOVE_TO':
-      if (!isInt(raw.index, 0, state.board.length - 1)) throw new IllegalActionError('Move to: no such space');
+      if (!isInt(raw.index, 0, size - 1)) throw new IllegalActionError('Move to: no such space');
       return { type: 'MOVE_TO', index: raw.index, collectGo: raw.collectGo === true, ...target() };
     case 'MOVE_RELATIVE':
-      if (!isInt(raw.steps, -(state.board.length - 1), state.board.length - 1) || raw.steps === 0) {
-        throw new IllegalActionError(`Move by: steps must be a whole number from -${state.board.length - 1} to ${state.board.length - 1}, not 0`);
+      if (!isInt(raw.steps, -(size - 1), size - 1) || raw.steps === 0) {
+        throw new IllegalActionError(`Move by: steps must be a whole number from -${size - 1} to ${size - 1}, not 0`);
       }
       return { type: 'MOVE_RELATIVE', steps: raw.steps, ...target() };
     case 'MOVE_TO_NEAREST': {
@@ -91,7 +126,7 @@ function validEffect(state: GameState, raw: unknown): Effect {
 }
 
 /** Checks a card form from an untrusted sender. */
-function validDraft(state: GameState, raw: unknown): CardDraft {
+export function validDraft(ctx: CardContext, raw: unknown): CardDraft {
   if (!isPlainObject(raw)) throw new IllegalActionError('The card must be an object');
   const title = typeof raw.title === 'string' ? raw.title.trim() : '';
   if (title.length < 1 || title.length > MAX_TITLE) throw new IllegalActionError(`The title must be 1–${MAX_TITLE} characters`);
@@ -101,13 +136,13 @@ function validDraft(state: GameState, raw: unknown): CardDraft {
   }
   if (!isInt(raw.copies, 1, MAX_COPIES)) throw new IllegalActionError(`Copies must be a whole number from 1 to ${MAX_COPIES}`);
   if (typeof raw.enabled !== 'boolean') throw new IllegalActionError('Enabled must be on or off');
-  return { title, text: raw.text.trim(), effects: raw.effects.map((e) => validEffect(state, e)), enabled: raw.enabled, copies: raw.copies };
+  return { title, text: raw.text.trim(), effects: raw.effects.map((e) => validEffect(ctx, e)), enabled: raw.enabled, copies: raw.copies };
 }
 
 /** A get-out-of-jail card is kept by its drawer until used. */
-const isKeepable = (fields: CardDraft) => fields.effects.some((e) => e.type === 'GET_OUT_OF_JAIL');
+export const isKeepable = (fields: CardDraft) => fields.effects.some((e) => e.type === 'GET_OUT_OF_JAIL');
 
-function validDeck(value: unknown): DeckKind {
+export function validDeck(value: unknown): DeckKind {
   if (value !== 'chance' && value !== 'treasure') throw new IllegalActionError('No such deck');
   return value;
 }
@@ -144,7 +179,7 @@ function withDeck(state: GameState, deck: DeckKind, cards: Card[], drawPile: str
 export function addCard(state: GameState, playerId: string, deckValue: unknown, raw: unknown, rng: Rng, events: GameEvent[]): GameState {
   requireHost(state, playerId);
   const deck = validDeck(deckValue);
-  const fields = validDraft(state, raw);
+  const fields = validDraft(roomContext(state), raw);
   const card: Card = { id: newCardId(state, deck), deck, ...fields, keepable: isKeepable(fields) };
   const { cards, drawPile } = state.decks[deck];
   events.push({ type: 'CARD_ADDED', deck, cardId: card.id, title: card.title, ...shownText(state, card) });
@@ -165,8 +200,8 @@ export function copiesInPlay(state: GameState, card: Card): number {
   return state.decks[card.deck].drawPile.filter((id) => id === card.id).length + held;
 }
 
-/** How many copies of a card should be in play: none while it is disabled. */
-export const wantedCopies = (card: Card | undefined) => (card?.enabled ? card.copies : 0);
+/** How many copies of a card should be in play: none while it is disabled or names a missing Player. */
+export const wantedCopies = (card: Card | undefined) => (card?.enabled && missingPlayers(card).length === 0 ? card.copies : 0);
 
 /**
  * Brings the copies of `card` in play to `wanted`: extra copies go into the draw pile at random;
@@ -228,7 +263,8 @@ export function editCard(
 ): GameState {
   requireHost(state, playerId);
   const old = findCard(state, cardId);
-  const fields = validDraft(state, raw);
+  // The Host may leave a missing Player in place, as long as the card stays out of play.
+  const fields = validDraft(roomContext(state, missingPlayers(old)), raw);
   const card: Card = { ...old, ...fields, keepable: isKeepable(fields) };
   const { deck, id, title } = card;
   if (old.title !== card.title || old.text !== card.text || !same(old.effects, card.effects)) {
@@ -251,11 +287,17 @@ export function deleteCard(state: GameState, playerId: string, cardId: unknown, 
   return withDeck(next, card.deck, deck.cards.filter((c) => c.id !== card.id), deck.drawPile);
 }
 
-/** The Default cards for one Deck, reshuffled. Copies Players hold stay with them and out of the pile. */
+/** The Default cards for one Deck, reshuffled. */
 export function resetDeck(state: GameState, playerId: string, deckValue: unknown, rng: Rng, events: GameEvent[]): GameState {
   requireHost(state, playerId);
   const deck = validDeck(deckValue);
-  const { cards, drawPile } = buildDeck(structuredClone(defaultCards[deck]));
+  events.push({ type: 'DECK_RESET', deck });
+  return replaceDeck(state, deck, structuredClone(defaultCards[deck]), rng);
+}
+
+/** Replaces a Deck's cards, reshuffled. Copies Players hold stay with them and out of the pile. */
+export function replaceDeck(state: GameState, deck: DeckKind, newCards: Card[], rng: Rng): GameState {
+  const { cards, drawPile } = buildDeck(newCards);
   const held = state.players.flatMap((p) => p.heldCards);
   const pile = drawPile.filter((id) => {
     const at = held.indexOf(id);
@@ -263,7 +305,6 @@ export function resetDeck(state: GameState, playerId: string, deckValue: unknown
     held.splice(at, 1);
     return false;
   });
-  events.push({ type: 'DECK_RESET', deck });
   return withDeck(state, deck, cards, shuffle(pile, rng));
 }
 

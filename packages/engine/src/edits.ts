@@ -1,6 +1,6 @@
 import { defaultBoard, defaultRules } from './defaults';
 import { IllegalActionError } from './engine';
-import type { GameEvent, GameState, PendingEdit, Rules, SpaceDefinition, SpaceField } from './types';
+import type { GameEvent, GameState, PendingEdit, PresetRules, Rules, SpaceDefinition, SpaceField } from './types';
 
 /** Host edits to Rules and Board: validation, staging and applying (build spec §5). */
 
@@ -123,15 +123,49 @@ function validBoard(edits: unknown, board: SpaceDefinition[]): PendingEdit['boar
   return out;
 }
 
-/** The built-in Defaults as one edit that overwrites every Rules key and editable space value. */
-function defaultsEdit(): PendingEdit {
-  const board: PendingEdit['board'] = {};
-  for (const space of defaultBoard) {
+/** The Rules keys the Host may edit, which is what a Preset stores. */
+export const EDITABLE_RULES = Object.keys(RULE_CHECKS) as (keyof PresetRules)[];
+
+/** Checks a complete set of editable Rules (a Preset's) from an untrusted source. */
+export function validFullRules(raw: unknown): PresetRules {
+  const rules = validRules(raw);
+  const missing = EDITABLE_RULES.find((key) => !(key in rules));
+  if (missing) throw new IllegalActionError(`${missing} is missing`);
+  return rules as PresetRules;
+}
+
+/**
+ * Checks a complete Board (a Preset's) from an untrusted source: the Default layout of space
+ * types and Colour groups, with every editable value present and valid.
+ */
+export function validFullBoard(raw: unknown): SpaceDefinition[] {
+  if (!Array.isArray(raw) || raw.length !== defaultBoard.length) {
+    throw new IllegalActionError(`The Board must have ${defaultBoard.length} spaces`);
+  }
+  return defaultBoard.map(({ index, type, group }) => {
+    const space: unknown = raw[index];
+    if (!isPlainObject(space) || space.index !== index || space.type !== type || space.group !== group) {
+      throw new IllegalActionError(`Space ${index} must be a ${type}${group ? ` in the ${group} group` : ''}`);
+    }
+    const out: Record<string, unknown> = { index, type, ...(group === undefined ? {} : { group }) };
+    for (const field of FIELDS_BY_TYPE[type] ?? []) {
+      const problem = SPACE_CHECKS[field](space[field]);
+      if (problem) throw new IllegalActionError(`Space ${index}: ${field} ${problem}`);
+      out[field] = typeof space[field] === 'string' ? space[field].trim() : space[field];
+    }
+    return out as SpaceDefinition;
+  });
+}
+
+/** Every editable value of `board`, as a Board edit. */
+function wholeBoard(board: SpaceDefinition[]): PendingEdit['board'] {
+  const edit: PendingEdit['board'] = {};
+  for (const space of board) {
     const fields: Record<string, unknown> = {};
     for (const field of FIELDS_BY_TYPE[space.type] ?? []) fields[field] = structuredClone(space[field]);
-    board[space.index] = fields;
+    edit[space.index] = fields;
   }
-  return { rules: structuredClone(defaultRules), board, reset: true };
+  return edit;
 }
 
 function requireHost(state: GameState, playerId: string) {
@@ -141,7 +175,7 @@ function requireHost(state: GameState, playerId: string) {
 function merge(pending: PendingEdit | undefined, edit: PendingEdit): PendingEdit {
   const board: PendingEdit['board'] = { ...pending?.board };
   for (const [index, fields] of Object.entries(edit.board)) board[Number(index)] = { ...board[Number(index)], ...fields };
-  return { rules: { ...pending?.rules, ...edit.rules }, board, reset: pending?.reset };
+  return { rules: { ...pending?.rules, ...edit.rules }, board, reset: pending?.reset, preset: pending?.preset };
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -164,7 +198,12 @@ export function updateBoard(state: GameState, playerId: string, edits: unknown):
 export function resetToDefaults(state: GameState, playerId: string): GameState {
   requireHost(state, playerId);
   // Replaces anything already waiting, so the reset is not undone by an earlier queued edit.
-  return { ...state, pendingEdit: defaultsEdit() };
+  return { ...state, pendingEdit: { rules: structuredClone(defaultRules), board: wholeBoard(defaultBoard), reset: true } };
+}
+
+/** Stages a Preset's Rules and Board, replacing anything already waiting (as a reset does). */
+export function stagePreset(state: GameState, name: string, rules: PresetRules, board: SpaceDefinition[]): GameState {
+  return { ...state, pendingEdit: { rules: structuredClone(rules), board: wholeBoard(board), preset: name } };
 }
 
 /** A multi-step action is running: an Auction, a Debt or a Card being resolved. */
@@ -212,6 +251,8 @@ export function applyPending(state: GameState, events: GameEvent[], justStaged: 
     return next as SpaceDefinition;
   });
   if (pending.reset) events.push({ type: 'DEFAULTS_RESTORED' });
+  // An immediate load is already announced by PRESET_LOADED in the same batch.
+  if (pending.preset !== undefined && !justStaged) events.push({ type: 'PRESET_APPLIED', name: pending.preset });
   events.push(...changes);
   return {
     ...state,
