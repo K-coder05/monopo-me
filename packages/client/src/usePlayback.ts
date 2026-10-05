@@ -4,11 +4,11 @@ import { cueOf, plan, type Beat, type Sound } from './playback';
 import { playSound } from './sounds';
 
 const TUMBLE_FRAMES = 7;
-const TUMBLE_MS = 90;
-const DICE_HOLD_MS = 300;
-const STEP_MS = 160;
+const TUMBLE_MS = 113;
+const DICE_HOLD_MS = 375;
+const STEP_MS = 200;
 /** A long card move (round the Board to GO) walks faster rather than holding up the game. */
-const MAX_WALK_MS = 3000;
+const MAX_WALK_MS = 3750;
 
 type Frame = { ms: number; run: () => void };
 

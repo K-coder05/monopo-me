@@ -5,7 +5,7 @@ type Note = { freq: number; at: number; length: number; wave?: OscillatorType; v
 
 // Short synthesized cues, so the game ships no audio files.
 const SOUNDS: Record<Sound, Note[]> = {
-  dice: [0, 0.05, 0.1, 0.16, 0.23].map((at, i) => ({ freq: 180 + ((i * 97) % 160), at, length: 0.04, wave: 'square', volume: 0.08 })),
+  dice: [0, 0.0625, 0.125, 0.2, 0.2875].map((at, i) => ({ freq: 180 + ((i * 97) % 160), at, length: 0.04, wave: 'square', volume: 0.08 })),
   step: [{ freq: 660, at: 0, length: 0.04, wave: 'triangle', volume: 0.12 }],
   cash: [
     { freq: 988, at: 0, length: 0.08 },
