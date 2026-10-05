@@ -329,7 +329,8 @@ export type GameEvent =
   | { type: 'TURN_ORDER_SET'; playerIds: string[] }
   | { type: 'TURN_STARTED'; playerId: string; round: number }
   | { type: 'DICE_ROLLED'; playerId: string; dice: number[]; total: number }
-  | { type: 'MOVED'; playerId: string; from: number; to: number }
+  /** Clockwise unless `backward`; a jump straight to a space (Jail, a swap) is not a MOVED. */
+  | { type: 'MOVED'; playerId: string; from: number; to: number; backward?: true }
   | { type: 'GO_SALARY'; playerId: string; amount: number }
   | { type: 'ROLL_AGAIN'; playerId: string }
   | { type: 'JAILED'; playerId: string; reason: JailReason }

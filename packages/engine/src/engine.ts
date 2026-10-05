@@ -592,7 +592,7 @@ function moveBack(state: GameState, playerId: string, steps: number, events: Gam
   const size = state.board.length;
   const from = findPlayer(state, playerId).position;
   const to = (((from - steps) % size) + size) % size;
-  events.push({ type: 'MOVED', playerId, from, to });
+  events.push({ type: 'MOVED', playerId, from, to, backward: true });
   return updatePlayer(state, playerId, (p) => ({ ...p, position: to }));
 }
 

@@ -1,19 +1,8 @@
-import { HOTEL, type GameState, type SpaceDefinition } from '@landlord/engine';
+import { HOTEL, type GameState } from '@landlord/engine';
 import { describeBuildings, groupColor } from './spaces';
+import { SpaceIcon } from './SpaceIcon';
 
 const SIDE = 11;
-
-const ICONS: Partial<Record<SpaceDefinition['type'], string>> = {
-  go: '➜',
-  station: '🚉',
-  utility: '💡',
-  chance: '?',
-  treasure: '🎁',
-  tax: '💰',
-  jail: '▦',
-  freeParking: 'P',
-  goToJail: '👮',
-};
 
 /** CSS grid row/column for a space: GO bottom-right, then clockwise. Assumes 4 equal sides. */
 function gridPosition(index: number): { row: number; col: number } {
@@ -36,12 +25,27 @@ function Buildings({ count }: { count: number }) {
   );
 }
 
-export function Board({ game, onSelect }: { game: GameState; onSelect: (index: number) => void }) {
+/**
+ * `positions` places tokens that are still walking (see usePlayback); `tumbling` shows dice faces
+ * while they roll instead of the last roll.
+ */
+export function Board({
+  game,
+  onSelect,
+  positions = {},
+  tumbling = null,
+}: {
+  game: GameState;
+  onSelect: (index: number) => void;
+  positions?: Record<string, number>;
+  tumbling?: number[] | null;
+}) {
+  const dice = tumbling ?? game.turn?.lastRoll ?? [];
   return (
     <div className="board">
       {game.board.map((space) => {
         const { row, col } = gridPosition(space.index);
-        const here = game.players.filter((p) => p.position === space.index);
+        const here = game.players.filter((p) => (positions[p.id] ?? p.position) === space.index);
         const corner = space.index % (SIDE - 1) === 0;
         const deed = game.deeds[space.index];
         const owner = deed && game.players.find((p) => p.id === deed.ownerId);
@@ -61,7 +65,7 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
             )}
             {owner && <div className="owner" style={{ background: owner.color }} aria-label={`Owned by ${owner.name}`} />}
             {deed?.mortgaged && <div className="mortgage-tag">Mortgaged</div>}
-            {ICONS[space.type] && <div className="icon">{ICONS[space.type]}</div>}
+            <SpaceIcon type={space.type} className="icon" />
             <div className="name">{space.name}</div>
             {space.price !== undefined && <div className="price">{space.price}</div>}
             {space.taxAmount !== undefined && <div className="price">Pay {space.taxAmount}</div>}
@@ -76,11 +80,21 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
         );
       })}
       <div className="centre">
+        <div className="decks">
+          <div className="deck chance">
+            <SpaceIcon type="chance" />
+            Chance
+          </div>
+          <div className="deck treasure">
+            <SpaceIcon type="treasure" />
+            Treasure
+          </div>
+        </div>
         <div className="title">Landlord</div>
         {game.rules.freeParkingMode === 'jackpot' && <div className="jackpot">Jackpot: {game.bank.jackpot}</div>}
-        {game.turn && game.turn.lastRoll.length > 0 && (
-          <div className="dice">
-            {game.turn.lastRoll.map((d, i) => (
+        {dice.length > 0 && (
+          <div className={`dice ${tumbling ? 'tumbling' : ''}`} aria-label={tumbling ? 'Rolling' : `Rolled ${dice.join(' and ')}`}>
+            {dice.map((d, i) => (
               <span key={i} className="die">
                 {d}
               </span>

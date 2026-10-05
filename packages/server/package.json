@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --external:express --external:socket.io --outfile=dist/index.js",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.9.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "vitest": "^2.1.4"
   }

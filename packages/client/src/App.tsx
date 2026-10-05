@@ -6,6 +6,8 @@ import { Lobby } from './Lobby';
 import { Game } from './Game';
 import { GameOver } from './GameOver';
 import { describeEvent } from './describeEvent';
+import { playSound } from './sounds';
+import { PREFERENCE_KEYS, readPreference } from './usePreference';
 
 const TOAST_MS = 6000;
 const HOST_EDITS: GameEvent['type'][] = [
@@ -44,6 +46,8 @@ export function App() {
   useEffect(() => {
     const onState = ({ state, events, serverNow, away }: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => {
       setGame(state);
+      // The Game screen (and its sounds) gives way to Game Over in this same update, so cheer here.
+      if (events.some((e) => e.type === 'GAME_OVER') && readPreference(PREFERENCE_KEYS.sound, true)) playSound('fanfare');
       // A reset or Preset load is one toast, not one per value it changed.
       const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED' || e.type === 'PRESET_LOADED' || e.type === 'PRESET_APPLIED');
       const fresh = events.filter((e) => isHostEdit(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));

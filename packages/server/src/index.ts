@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import {
@@ -17,10 +18,13 @@ import {
 } from '@landlord/engine';
 import { Presets } from './presets';
 import { Rooms } from './rooms';
+import { serveClient } from './serveClient';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data', 'rooms');
 const PRESETS_DIR = process.env.PRESETS_DIR ?? join(process.cwd(), 'data', 'presets');
+// The same two levels up from src/index.ts (dev) and dist/index.js (the production bundle).
+const CLIENT_DIR = process.env.CLIENT_DIR ?? fileURLToPath(new URL('../../client/dist', import.meta.url));
 
 /** The one Player this connection controls (ADR 0001). */
 type SocketData = { player?: JoinedRoom };
@@ -36,6 +40,8 @@ setInterval(() => rooms.expireIdle(), 60 * 60 * 1000).unref();
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
+
+const servingClient = serveClient(app, CLIENT_DIR);
 
 /** Sends each connection in the Room the state as its Player may see it (hidden Decks stay with the Host). */
 function broadcast(roomCode: string, { state, events }: ActionResult) {
@@ -380,4 +386,5 @@ io.on('connection', (socket: GameSocket) => {
 
 httpServer.listen(PORT, () => {
   console.log(`Landlord server listening on http://localhost:${PORT}`);
+  if (servingClient) console.log(`Serving the client from ${CLIENT_DIR}`);
 });

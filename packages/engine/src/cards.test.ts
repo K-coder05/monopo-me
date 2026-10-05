@@ -454,9 +454,9 @@ describe('MOVE_RELATIVE', () => {
   it('goes back three spaces from the Chance space and resolves that space', () => {
     const { state, events } = resolved([card([{ type: 'MOVE_RELATIVE', steps: -3 }])]);
 
-    // Back on Income Tax.
+    // Back on Income Tax, marked as a move backwards so the token can step the right way.
     expect(player(state, 'ann')).toMatchObject({ position: 4, cash: 1500 - 200 });
-    expect(events).toContainEqual({ type: 'MOVED', playerId: 'ann', from: 7, to: 4 });
+    expect(events).toContainEqual({ type: 'MOVED', playerId: 'ann', from: 7, to: 4, backward: true });
   });
 
   it('wraps backwards round the Board without a salary', () => {
@@ -466,9 +466,10 @@ describe('MOVE_RELATIVE', () => {
   });
 
   it('moves forward and collects a salary for passing GO', () => {
-    const { state } = resolved([card([{ type: 'MOVE_RELATIVE', steps: 35 }])]);
+    const { state, events } = resolved([card([{ type: 'MOVE_RELATIVE', steps: 35 }])]);
 
     expect(player(state, 'ann')).toMatchObject({ position: 2, cash: 1700 });
+    expect(events).toContainEqual({ type: 'MOVED', playerId: 'ann', from: 7, to: 2 });
   });
 });
 

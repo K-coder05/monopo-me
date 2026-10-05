@@ -9,8 +9,10 @@
   ],
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"npm run dev -w @landlord/server\" \"npm run dev -w @landlord/client\"",
+    "build": "npm run build -w @landlord/client -w @landlord/server",
+    "start": "node packages/server/dist/index.js",
     "typecheck": "npm run typecheck --workspaces",
-    "test": "npm run test -w @landlord/engine -w @landlord/server"
+    "test": "npm run test -w @landlord/engine -w @landlord/server -w @landlord/client"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

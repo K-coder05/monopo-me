@@ -24,6 +24,17 @@ import { DebtModal } from './DebtModal';
 import { TradeModal, tradePartners } from './TradeModal';
 import { describeBuildings, groupColor } from './spaces';
 import { useSecondsLeft } from './useSecondsLeft';
+import { PanZoom } from './PanZoom';
+import { usePlayback } from './usePlayback';
+import { PREFERENCE_KEYS, usePreference } from './usePreference';
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
 function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
@@ -58,6 +69,9 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const turn = game.turn!;
   const myTurn = turn.playerId === me;
   const logEnd = useRef<HTMLLIElement>(null);
+  const [animate, setAnimate] = usePreference(PREFERENCE_KEYS.animate, !prefersReducedMotion());
+  const [sound, setSound] = usePreference(PREFERENCE_KEYS.sound, true);
+  const playback = usePlayback(game, me, animate, sound);
 
   useEffect(() => {
     logEnd.current?.scrollIntoView({ block: 'nearest' });
@@ -74,7 +88,8 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const ownedBy = (playerId: string) =>
     game.board.filter((s) => game.deeds[s.index]?.ownerId === playerId);
   const myself = game.players.find((p) => p.id === me);
-  const offered = myTurn && turn.step === 'awaitBuyDecision' ? game.board[myself?.position ?? 0] : undefined;
+  // Prompts wait for the dice and token to finish, so the Player sees where they landed first.
+  const offered = myTurn && turn.step === 'awaitBuyDecision' && !playback.busy ? game.board[myself?.position ?? 0] : undefined;
   // The engine enforces the rest (even building, cash, bank stock) and explains any refusal.
   const owesDebt = turn.step === 'awaitDebt' && game.debts[0]?.debtorId === me;
   const canManageProperties = myTurn && (turn.step === 'awaitRoll' || turn.step === 'awaitEndTurn');
@@ -93,7 +108,9 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
 
   return (
     <main className="game">
-      <Board game={game} onSelect={setSelected} />
+      <PanZoom>
+        <Board game={game} onSelect={setSelected} positions={playback.positions} tumbling={playback.tumbling} />
+      </PanZoom>
 
       <aside className="side">
         <ul className="strip">
@@ -157,50 +174,68 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
           </p>
         )}
 
-        <div className="actions">
-          {!spectating && (
-            <>
-              <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
-                Roll
-              </button>
-              <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
-                Pay fine ({game.rules.jailFine})
-              </button>
-              <button disabled={!canUseJailCard} onClick={() => act('USE_JAIL_CARD')}>
-                Use jail card
-              </button>
-              <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
-                End turn
-              </button>
-              <button
-                className="secondary"
-                disabled={!game.rules.tradingEnabled || !!game.trade || !!myself?.bankrupt || tradePartners(game, me).length === 0}
-                onClick={() => setBuilding(true)}
-              >
-                Trade
-              </button>
-            </>
+        <section className="dock" aria-label={spectating ? 'Actions' : 'My panel'}>
+          {myself && (
+            <p className="me">
+              <span className="token" style={{ background: myself.color }} />
+              <strong>{myself.name}</strong>
+              {myself.inJail && <span className="jailed">In Jail</span>}
+              <span className="cash">{myself.cash}</span>
+            </p>
           )}
-          <button className="secondary" onClick={() => setRulesOpen(true)}>
-            Rules
-          </button>
-          <button className="secondary" onClick={() => setCardsOpen(true)}>
-            Cards
-          </button>
-          {isHost && (
-            <>
-              <button className="secondary" onClick={() => act(game.paused ? 'RESUME' : 'PAUSE')}>
-                {game.paused ? 'Resume' : 'Pause'}
-              </button>
-              <button className="secondary" onClick={() => setPresetsOpen(true)}>
-                Presets
-              </button>
-              <button className="secondary" onClick={() => setHostToolsOpen(true)}>
-                Host tools
-              </button>
-            </>
-          )}
-        </div>
+          <div className="actions">
+            {!spectating && (
+              <>
+                <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
+                  Roll
+                </button>
+                <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
+                  Pay fine ({game.rules.jailFine})
+                </button>
+                <button disabled={!canUseJailCard} onClick={() => act('USE_JAIL_CARD')}>
+                  Use jail card
+                </button>
+                <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
+                  End turn
+                </button>
+                <button
+                  className="secondary"
+                  disabled={!game.rules.tradingEnabled || !!game.trade || !!myself?.bankrupt || tradePartners(game, me).length === 0}
+                  onClick={() => setBuilding(true)}
+                >
+                  Trade
+                </button>
+              </>
+            )}
+            <button className="secondary" onClick={() => setRulesOpen(true)}>
+              Rules
+            </button>
+            <button className="secondary" onClick={() => setCardsOpen(true)}>
+              Cards
+            </button>
+            {isHost && (
+              <>
+                <button className="secondary" onClick={() => act(game.paused ? 'RESUME' : 'PAUSE')}>
+                  {game.paused ? 'Resume' : 'Pause'}
+                </button>
+                <button className="secondary" onClick={() => setPresetsOpen(true)}>
+                  Presets
+                </button>
+                <button className="secondary" onClick={() => setHostToolsOpen(true)}>
+                  Host tools
+                </button>
+              </>
+            )}
+          </div>
+          <div className="prefs">
+            <label>
+              <input type="checkbox" checked={animate} onChange={(e) => setAnimate(e.target.checked)} /> Animations
+            </label>
+            <label>
+              <input type="checkbox" checked={sound} onChange={(e) => setSound(e.target.checked)} /> Sound
+            </label>
+          </div>
+        </section>
         {game.rulesChangedMidGame && <p className="banner">Rules changed during this game. Open Rules to see the current values.</p>}
         {game.pendingEdit && <p className="notice">Rules changes will apply when the current action finishes.</p>}
         {error && <p className="error">{error}</p>}
@@ -322,7 +357,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         />
       )}
 
-      {(game.turn?.step === 'awaitCard' || game.turn?.step === 'awaitManual') && (
+      {(game.turn?.step === 'awaitCard' || game.turn?.step === 'awaitManual') && !playback.busy && (
         <CardModal game={game} me={me} onHostTools={() => setHostToolsOpen(true)} />
       )}
 
