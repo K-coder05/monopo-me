@@ -27,6 +27,10 @@ export type ClientToServer = {
   MORTGAGE: (msg: { index: number }, ack: Ack) => void;
   UNMORTGAGE: (msg: { index: number }, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
+  PAY_DEBT: (msg: object, ack: Ack) => void;
+  DECLARE_BANKRUPTCY: (msg: object, ack: Ack) => void;
+  REMATCH: (msg: object, ack: Ack) => void;
+  BACK_TO_LOBBY: (msg: object, ack: Ack) => void;
 };
 
 export type ServerToClient = {

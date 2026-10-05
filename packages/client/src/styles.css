@@ -506,3 +506,28 @@ button.small {
 .deed dd {
   margin: 0;
 }
+
+.strip li.bankrupt {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.debt-assets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.debt-assets li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ranking {
+  padding-left: 1.5rem;
+}

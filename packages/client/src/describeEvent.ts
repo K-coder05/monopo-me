@@ -1,8 +1,9 @@
-import { HOTEL, type GameEvent, type GameState } from '@landlord/engine';
+import { HOTEL, type Creditor, type GameEvent, type GameState } from '@landlord/engine';
 
 /** One line of game log text for an event. */
 export function describeEvent(event: GameEvent, game: GameState): string {
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? 'Someone';
+  const creditor = (c: Creditor) => (c.type === 'bank' ? 'the bank' : name(c.playerId));
   const space = (index: number) => game.board[index]?.name ?? `space ${index}`;
 
   switch (event.type) {
@@ -76,5 +77,15 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} unmortgaged ${space(event.index)} for ${event.cost}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
+    case 'DEBT_OWED':
+      return `${name(event.debtorId)} owes ${event.amount} to ${creditor(event.creditor)} and must sell or mortgage`;
+    case 'DEBT_PAID':
+      return `${name(event.debtorId)} paid their ${event.amount} Debt to ${creditor(event.creditor)}`;
+    case 'BANKRUPT':
+      return `${name(event.playerId)} is bankrupt; everything goes to ${creditor(event.creditor)}`;
+    case 'GAME_OVER':
+      return `Game over: ${name(event.winnerId)} wins!`;
+    case 'RETURNED_TO_LOBBY':
+      return 'Back in the Lobby';
   }
 }

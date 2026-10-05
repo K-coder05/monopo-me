@@ -14,6 +14,7 @@ import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
 import { AuctionModal } from './AuctionModal';
+import { DebtModal } from './DebtModal';
 import { describeBuildings, groupColor } from './spaces';
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
@@ -51,7 +52,10 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
   const myself = game.players.find((p) => p.id === me);
   const offered = myTurn && turn.step === 'awaitBuyDecision' ? game.board[myself?.position ?? 0] : undefined;
   // The engine enforces the rest (even building, cash, bank stock) and explains any refusal.
+  const owesDebt = turn.step === 'awaitDebt' && game.debts[0]?.debtorId === me;
   const canManageProperties = myTurn && (turn.step === 'awaitRoll' || turn.step === 'awaitEndTurn');
+  // While paying a Debt, selling and mortgaging are open whoever's turn it is; building is not.
+  const canSell = canManageProperties || owesDebt;
   const holdsGroup = (s: SpaceDefinition) => colourGroup(game.board, s.group).every((g) => game.deeds[g.index]?.ownerId === me);
   const canPayFine =
     myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
@@ -63,7 +67,7 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
       <aside className="side">
         <ul className="strip">
           {game.players.map((p) => (
-            <li key={p.id} className={p.id === turn.playerId ? 'active' : ''}>
+            <li key={p.id} className={p.bankrupt ? 'bankrupt' : p.id === turn.playerId ? 'active' : ''}>
               <span className="token" style={{ background: p.color }} />
               <span className="pname">
                 {p.name}
@@ -127,7 +131,7 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
                             </button>
                             <button
                               className="small secondary"
-                              disabled={!canManageProperties || buildings === 0}
+                              disabled={!canSell || buildings === 0}
                               onClick={() => actOnProperty('SELL_BUILDING', s.index)}
                             >
                               Sell
@@ -145,7 +149,7 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
                         ) : (
                           <button
                             className="small secondary"
-                            disabled={!canManageProperties || groupHasBuildings(game, s)}
+                            disabled={!canSell || groupHasBuildings(game, s)}
                             onClick={() => actOnProperty('MORTGAGE', s.index)}
                           >
                             Mortgage ({mortgageValue(s, game.rules)})
@@ -193,6 +197,8 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
 
       {/* Stays up under an open title deed so nobody loses the countdown while checking the property. */}
       {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
+
+      {game.turn?.step === 'awaitDebt' && <DebtModal game={game} me={me} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

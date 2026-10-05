@@ -4,6 +4,7 @@ import { socket } from './socket';
 import { Home } from './Home';
 import { Lobby } from './Lobby';
 import { Game } from './Game';
+import { GameOver } from './GameOver';
 
 export function App() {
   const [joined, setJoined] = useState<JoinedRoom | null>(null);
@@ -24,5 +25,6 @@ export function App() {
 
   if (!joined || !game) return <Home onJoined={setJoined} />;
   if (game.phase === 'lobby') return <Lobby game={game} me={joined.playerId} />;
+  if (game.phase === 'finished') return <GameOver game={game} me={joined.playerId} />;
   return <Game game={game} me={joined.playerId} clockOffset={clockOffset} />;
 }

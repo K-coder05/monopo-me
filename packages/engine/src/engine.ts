@@ -1,7 +1,11 @@
+import { defaultBoard, defaultRules } from './defaults';
 import type {
   Action,
+  AfterDebts,
   ActionResult,
   Auction,
+  Creditor,
+  Debt,
   GameEvent,
   GameState,
   JailReason,
@@ -40,6 +44,8 @@ export function createGame(
     board,
     players: [newPlayer(host, rules, board)],
     deeds: {},
+    debts: [],
+    bankruptcies: [],
     bank: { jackpot: 0 },
     log: [],
   };
@@ -73,7 +79,7 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       next = placeBid(state, action.playerId, action.amount, rules, now, events);
       break;
     case 'PASS_AUCTION':
-      next = passAuction(state, action.playerId, rules, events);
+      next = passAuction(state, action.playerId, rules, now, events);
       break;
     case 'EXPIRE_AUCTION':
       next = expireAuction(state, rules, now, events);
@@ -93,6 +99,18 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
       break;
+    case 'PAY_DEBT':
+      next = payDebt(state, action.playerId, rules, events);
+      break;
+    case 'DECLARE_BANKRUPTCY':
+      next = declareBankruptcy(state, action.playerId, rules, now, events);
+      break;
+    case 'REMATCH':
+      next = rematch(state, action.playerId, rng, events);
+      break;
+    case 'BACK_TO_LOBBY':
+      next = backToLobby(state, action.playerId, events);
+      break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
   }
@@ -109,6 +127,7 @@ function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player
     inJail: false,
     jailTurns: 0,
     hasPassedGo: false,
+    bankrupt: false,
   };
 }
 
@@ -174,8 +193,18 @@ function roll(state: GameState, playerId: string, rules: Rules, rng: Rng, events
   let next: GameState = { ...state, turn: { ...turn, lastRoll: dice } };
   const fromJail = findPlayer(state, playerId).inJail;
   if (fromJail) {
-    next = rollInJail(next, playerId, doubles, rules, events);
-    if (findPlayer(next, playerId).inJail) return { ...next, turn: { ...next.turn!, step: 'awaitEndTurn' } };
+    if (doubles) {
+      next = releaseFromJail(next, playerId, events);
+    } else {
+      const failedRolls = findPlayer(state, playerId).jailTurns + 1;
+      if (failedRolls >= rules.maxJailTurns) {
+        // The fine is forced; the roll's move waits until it is paid.
+        return chargeForcedJailFine(next, playerId, total, rules, events);
+      }
+      events.push({ type: 'STILL_IN_JAIL', playerId, failedRolls });
+      next = updatePlayer(next, playerId, (p) => ({ ...p, jailTurns: failedRolls }));
+      return { ...next, turn: { ...next.turn!, step: 'awaitEndTurn' } };
+    }
   }
 
   // Doubles that get a Player out of Jail earn no extra roll.
@@ -192,20 +221,6 @@ function isDoubles(dice: number[]): boolean {
   return dice.length > 1 && dice.every((d) => d === dice[0]);
 }
 
-/**
- * A jailed Player's roll: Doubles release them; otherwise they stay, until the failure that
- * reaches maxJailTurns forces the fine and releases them. Moving by the roll is up to the caller.
- */
-function rollInJail(state: GameState, playerId: string, doubles: boolean, rules: Rules, events: GameEvent[]): GameState {
-  if (doubles) return releaseFromJail(state, playerId, events);
-  const failedRolls = findPlayer(state, playerId).jailTurns + 1;
-  if (failedRolls >= rules.maxJailTurns) {
-    return releaseFromJail(chargeJailFine(state, playerId, true, rules, events), playerId, events);
-  }
-  events.push({ type: 'STILL_IN_JAIL', playerId, failedRolls });
-  return updatePlayer(state, playerId, (p) => ({ ...p, jailTurns: failedRolls }));
-}
-
 function payJailFine(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
   requireTurn(state, playerId, 'awaitRoll');
   const player = findPlayer(state, playerId);
@@ -213,13 +228,14 @@ function payJailFine(state: GameState, playerId: string, rules: Rules, events: G
   if (player.cash < rules.jailFine) {
     throw new IllegalActionError(`You need ${rules.jailFine} to pay the fine, but have ${player.cash}`);
   }
-  return releaseFromJail(chargeJailFine(state, playerId, false, rules, events), playerId, events);
+  events.push({ type: 'JAIL_FINE_PAID', playerId, amount: rules.jailFine, forced: false });
+  return releaseFromJail(settleNow(state, bankDebt(playerId, rules.jailFine), rules), playerId, events);
 }
 
-/** `forced` when the Player has used up their rolls; until Debts exist, a forced fine can take cash negative. */
-function chargeJailFine(state: GameState, playerId: string, forced: boolean, rules: Rules, events: GameEvent[]): GameState {
-  events.push({ type: 'JAIL_FINE_PAID', playerId, amount: rules.jailFine, forced });
-  return payBankFeedingJackpot(state, playerId, rules.jailFine, rules);
+/** The fine once the Player has used up their rolls; the roll's move waits until it is paid. */
+function chargeForcedJailFine(state: GameState, playerId: string, total: number, rules: Rules, events: GameEvent[]): GameState {
+  events.push({ type: 'JAIL_FINE_PAID', playerId, amount: rules.jailFine, forced: true });
+  return charge(releaseFromJail(state, playerId, events), bankDebt(playerId, rules.jailFine), { moveFromJail: total }, rules, events);
 }
 
 /**
@@ -271,7 +287,7 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
   if (space.type === 'tax') {
     const amount = space.taxAmount ?? 0;
     events.push({ type: 'TAX_PAID', playerId, index: space.index, amount });
-    return finishLanding(payBankFeedingJackpot(state, playerId, amount, rules));
+    return charge(state, bankDebt(playerId, amount), 'landingResolved', rules, events);
   }
   if (space.type === 'freeParking') return finishLanding(freeParking(state, playerId, rules, events));
   if (!isProperty(space)) return finishLanding(state);
@@ -299,8 +315,8 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
 
   const amount = rentFor(state, space, deed.ownerId, rules);
   events.push({ type: 'RENT_PAID', playerId, ownerId: deed.ownerId, index: space.index, amount });
-  // Until Debts exist, a Player who cannot cover the rent goes into negative cash.
-  return finishLanding(adjustCash(adjustCash(state, playerId, -amount), deed.ownerId, amount));
+  const debt: Debt = { debtorId: playerId, creditor: { type: 'player', playerId: deed.ownerId }, amount, feedsJackpot: false };
+  return charge(state, debt, 'landingResolved', rules, events);
 }
 
 /**
@@ -314,17 +330,6 @@ function landingResolved(state: GameState, rules: Rules, events: GameEvent[]): G
     return { ...state, turn: { ...turn, step: 'awaitRoll' } };
   }
   return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
-}
-
-/**
- * A payment to the bank of the kind that feeds the Jackpot: tax, jail fines and card Transfers
- * to the bank. Purchases, building costs and unmortgage interest must not use this.
- * Until Debts exist, a Player who cannot cover it goes into negative cash.
- */
-function payBankFeedingJackpot(state: GameState, playerId: string, amount: number, rules: Rules): GameState {
-  const paid = adjustCash(state, playerId, -amount);
-  if (rules.freeParkingMode !== 'jackpot') return paid;
-  return { ...paid, bank: { ...paid.bank, jackpot: paid.bank.jackpot + amount } };
 }
 
 function freeParking(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
@@ -397,7 +402,7 @@ function decline(state: GameState, playerId: string, rules: Rules, now: number, 
   return {
     ...state,
     turn: { ...turn, step: 'auction' },
-    auction: { index, bidders: state.players.map((p) => p.id), endsAt },
+    auction: { index, bidders: activePlayers(state).map((p) => p.id), endsAt },
   };
 }
 
@@ -437,46 +442,46 @@ function placeBid(
 
   const endsAt = countdownEnd(rules, now);
   events.push({ type: 'BID_PLACED', playerId, amount, endsAt });
-  return settleIfDecided({ ...state, auction: { ...auction, highBid: { playerId, amount }, endsAt } }, rules, events);
+  return settleIfDecided({ ...state, auction: { ...auction, highBid: { playerId, amount }, endsAt } }, rules, now, events);
 }
 
-function passAuction(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+function passAuction(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
   const auction = requireBidder(state, playerId);
   if (auction.highBid?.playerId === playerId) throw new IllegalActionError('You cannot pass while you have the highest bid');
   events.push({ type: 'AUCTION_PASSED', playerId });
   const bidders = auction.bidders.filter((id) => id !== playerId);
-  return settleIfDecided({ ...state, auction: { ...auction, bidders } }, rules, events);
+  return settleIfDecided({ ...state, auction: { ...auction, bidders } }, rules, now, events);
 }
 
 function expireAuction(state: GameState, rules: Rules, now: number, events: GameEvent[]): GameState {
   const auction = requireAuction(state);
   if (now < auction.endsAt) throw new IllegalActionError('The Auction countdown has not run out');
-  return settleAuction(state, auction, rules, events);
+  return settleAuction(state, auction, rules, now, events);
 }
 
 /**
  * Ends the Auction once nobody can change the result: everyone has passed, or the only
  * Player left holds the highest bid. A lone Player with no bid yet may still bid.
  */
-function settleIfDecided(state: GameState, rules: Rules, events: GameEvent[]): GameState {
+function settleIfDecided(state: GameState, rules: Rules, now: number, events: GameEvent[]): GameState {
   const auction = state.auction!;
   const [last, ...others] = auction.bidders;
   const decided = last === undefined || (others.length === 0 && auction.highBid?.playerId === last);
-  return decided ? settleAuction(state, auction, rules, events) : state;
+  return decided ? settleAuction(state, auction, rules, now, events) : state;
 }
 
 /** The highest bidder pays and takes the Deed; with no bids the property stays with the bank. */
-function settleAuction(state: GameState, { index, highBid }: Auction, rules: Rules, events: GameEvent[]): GameState {
-  const closed: GameState = { ...state, auction: undefined };
+function settleAuction(state: GameState, { index, highBid }: Auction, rules: Rules, now: number, events: GameEvent[]): GameState {
+  let closed: GameState = { ...state, auction: undefined };
   if (!highBid) {
     events.push({ type: 'AUCTION_UNSOLD', index });
-    return landingResolved(closed, rules, events);
+  } else {
+    const { playerId, amount } = highBid;
+    events.push({ type: 'AUCTION_WON', playerId, index, amount });
+    const paid = adjustCash(closed, playerId, -amount);
+    closed = { ...paid, deeds: { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } } };
   }
-  const { playerId, amount } = highBid;
-  events.push({ type: 'AUCTION_WON', playerId, index, amount });
-  const paid = adjustCash(closed, playerId, -amount);
-  const deeds = { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } };
-  return landingResolved({ ...paid, deeds }, rules, events);
+  return closed.auctionQueue ? nextBankruptcyAuction(closed, rules, now, events) : landingResolved(closed, rules, events);
 }
 
 /**
@@ -534,6 +539,15 @@ function buildingsInPlay(state: GameState): { houses: number; hotels: number } {
   };
 }
 
+/**
+ * Like requirePropertyMoment, but a Player who owes the first queued Debt may also sell and mortgage
+ * to cover it, whoever's turn it is.
+ */
+function requireSellMoment(state: GameState, playerId: string): void {
+  if (state.turn?.step === 'awaitDebt' && state.debts[0]?.debtorId === playerId) return;
+  requirePropertyMoment(state, playerId);
+}
+
 function build(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
   requirePropertyMoment(state, playerId);
   const { space, deed, group } = requireBuildableGroup(state, playerId, index);
@@ -561,7 +575,7 @@ function build(state: GameState, playerId: string, index: number, rules: Rules, 
 }
 
 function sellBuilding(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
-  requirePropertyMoment(state, playerId);
+  requireSellMoment(state, playerId);
   const { space, deed } = requireOwnedProperty(state, playerId, index);
   if (deed.buildings === 0) throw new IllegalActionError('There are no buildings on that street');
   if (rules.evenBuildRule) {
@@ -609,7 +623,7 @@ function requireOwnedProperty(state: GameState, playerId: string, index: number)
 }
 
 function mortgage(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
-  requirePropertyMoment(state, playerId);
+  requireSellMoment(state, playerId);
   const { space, deed } = requireOwnedProperty(state, playerId, index);
   if (deed.mortgaged) throw new IllegalActionError('That property is already mortgaged');
   if (groupHasBuildings(state, space)) {
@@ -663,15 +677,203 @@ function goIndex(board: SpaceDefinition[]): number | undefined {
 }
 
 function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameState {
-  const turn = requireTurn(state, playerId, 'awaitEndTurn');
+  requireTurn(state, playerId, 'awaitEndTurn');
   events.push({ type: 'TURN_ENDED', playerId });
+  return passTurn(state, events);
+}
 
-  const index = state.players.findIndex((p) => p.id === playerId);
-  const nextIndex = (index + 1) % state.players.length;
-  const round = nextIndex === 0 ? turn.round + 1 : turn.round;
-  const nextId = state.players[nextIndex]!.id;
-  events.push({ type: 'TURN_STARTED', playerId: nextId, round });
-  return { ...state, turn: { playerId: nextId, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round } };
+/** Starts the next turn for the next Player not bankrupt, after the active Player. */
+function passTurn(state: GameState, events: GameEvent[]): GameState {
+  const turn = state.turn!;
+  const index = state.players.findIndex((p) => p.id === turn.playerId);
+  const size = state.players.length;
+  let step = 1;
+  while (state.players[(index + step) % size]!.bankrupt) step++;
+  const next = state.players[(index + step) % size]!;
+  const round = index + step >= size ? turn.round + 1 : turn.round;
+  events.push({ type: 'TURN_STARTED', playerId: next.id, round });
+  return { ...state, turn: { playerId: next.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round } };
+}
+
+function activePlayers(state: GameState): Player[] {
+  return state.players.filter((p) => !p.bankrupt);
+}
+
+function bankDebt(debtorId: string, amount: number): Debt {
+  return { debtorId, creditor: { type: 'bank' }, amount, feedsJackpot: true };
+}
+
+/** Moves a Debt's cash now; the debtor must already be able to cover it. */
+function settleNow(state: GameState, debt: Debt, rules: Rules): GameState {
+  const paid = adjustCash(state, debt.debtorId, -debt.amount);
+  if (debt.creditor.type === 'player') return adjustCash(paid, debt.creditor.playerId, debt.amount);
+  if (!debt.feedsJackpot || rules.freeParkingMode !== 'jackpot') return paid;
+  return { ...paid, bank: { ...paid.bank, jackpot: paid.bank.jackpot + debt.amount } };
+}
+
+/**
+ * Queues `debt` behind any already waiting and settles what can be paid. If the debtor cannot cover
+ * the first Debt, play stops at the 'awaitDebt' step until they pay or go bankrupt; otherwise
+ * the turn carries on as `afterDebts` says.
+ */
+function charge(state: GameState, debt: Debt, afterDebts: AfterDebts, rules: Rules, events: GameEvent[]): GameState {
+  const queued = { ...state, debts: [...state.debts, debt], turn: { ...state.turn!, afterDebts } };
+  return resumeTurn(queued, rules, events);
+}
+
+/** Pays the Debts at the head of the queue that their debtors can cover, then carries on or blocks. */
+function resumeTurn(state: GameState, rules: Rules, events: GameEvent[]): GameState {
+  let next = state;
+  for (;;) {
+    const head = next.debts[0];
+    if (!head) break;
+    if (findPlayer(next, head.debtorId).cash < head.amount) {
+      events.push({ type: 'DEBT_OWED', debtorId: head.debtorId, creditor: head.creditor, amount: head.amount });
+      return { ...next, turn: { ...next.turn!, step: 'awaitDebt' } };
+    }
+    next = { ...settleNow(next, head, rules), debts: next.debts.slice(1) };
+  }
+
+  const turn = next.turn!;
+  const { afterDebts } = turn;
+  const resumed: GameState = { ...next, turn: { ...turn, afterDebts: undefined } };
+  if (findPlayer(resumed, turn.playerId).bankrupt) return passTurn(resumed, events);
+  if (typeof afterDebts === 'object') {
+    const moving = { ...resumed, turn: { ...resumed.turn!, doublesCount: 0 } };
+    return land(moveForward(moving, turn.playerId, afterDebts.moveFromJail, rules, events), turn.playerId, rules, events);
+  }
+  return landingResolved(resumed, rules, events);
+}
+
+function requireDebtor(state: GameState, playerId: string): Debt {
+  const debt = state.debts[0];
+  if (state.turn?.step !== 'awaitDebt' || !debt) throw new IllegalActionError('You owe nothing right now');
+  if (debt.debtorId !== playerId) throw new IllegalActionError('That Debt is not yours');
+  return debt;
+}
+
+function payDebt(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  const debt = requireDebtor(state, playerId);
+  const cash = findPlayer(state, playerId).cash;
+  if (cash < debt.amount) throw new IllegalActionError(`You need ${debt.amount} to pay this Debt, but have ${cash}`);
+  events.push({ type: 'DEBT_PAID', debtorId: playerId, creditor: debt.creditor, amount: debt.amount });
+  const paid = { ...settleNow(state, debt, rules), debts: state.debts.slice(1) };
+  return resumeTurn(paid, rules, events);
+}
+
+function declareBankruptcy(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
+  const debt = requireDebtor(state, playerId);
+  if (findPlayer(state, playerId).cash >= debt.amount) {
+    throw new IllegalActionError('You can cover this Debt, so you cannot declare Bankruptcy');
+  }
+  return bankrupt(state, playerId, debt.creditor, rules, now, events);
+}
+
+/**
+ * Takes `playerId` out of the game. Everything they have left goes to `creditor`; Debts they owe, or
+ * that were owed to them, are cancelled. A bank Creditor has the properties Auctioned unmortgaged,
+ * one by one. Buildings stay on streets that pass to a Player and are cleared for the bank.
+ * (Kept cards will go with the cards ticket.)
+ */
+function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules: Rules, now: number, events: GameEvent[]): GameState {
+  events.push({ type: 'BANKRUPT', playerId, creditor });
+  const player = findPlayer(state, playerId);
+  const owned = Object.keys(state.deeds)
+    .map(Number)
+    .filter((i) => state.deeds[i]!.ownerId === playerId)
+    .sort((a, b) => a - b);
+
+  let next = updatePlayer(state, playerId, (p) => ({ ...p, cash: 0, bankrupt: true, inJail: false, jailTurns: 0 }));
+  const deeds = { ...next.deeds };
+  for (const i of owned) delete deeds[i];
+  if (creditor.type === 'player') {
+    for (const i of owned) deeds[i] = { ...state.deeds[i]!, ownerId: creditor.playerId };
+    next = adjustCash(next, creditor.playerId, player.cash);
+  }
+  const cancelled = (d: Debt) =>
+    d.debtorId === playerId || (d.creditor.type === 'player' && d.creditor.playerId === playerId);
+  next = {
+    ...next,
+    deeds,
+    bankruptcies: [...next.bankruptcies, playerId],
+    debts: next.debts.filter((d) => !cancelled(d)),
+  };
+
+  const left = activePlayers(next);
+  if (left.length === 1) {
+    const winnerId = left[0]!.id;
+    events.push({ type: 'GAME_OVER', winnerId });
+    return { ...next, phase: 'finished', turn: undefined, auction: undefined, auctionQueue: undefined, debts: [], winnerId };
+  }
+  if (creditor.type === 'bank' && owned.length > 0) {
+    return nextBankruptcyAuction({ ...next, auctionQueue: owned }, rules, now, events);
+  }
+  return resumeTurn(next, rules, events);
+}
+
+/** Opens the Auction for the next property of a bank Bankruptcy, or carries on once none are left. */
+function nextBankruptcyAuction(state: GameState, rules: Rules, now: number, events: GameEvent[]): GameState {
+  const [index, ...rest] = state.auctionQueue!;
+  if (index === undefined) return resumeTurn({ ...state, auctionQueue: undefined }, rules, events);
+  const endsAt = countdownEnd(rules, now);
+  events.push({ type: 'AUCTION_STARTED', index, endsAt });
+  return {
+    ...state,
+    turn: { ...state.turn!, step: 'auction' },
+    auction: { index, bidders: activePlayers(state).map((p) => p.id), endsAt },
+    auctionQueue: rest,
+  };
+}
+
+/** Everyone starts again with `rules` and `board`: cash, tokens and all game state reset. */
+function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[]): GameState {
+  return {
+    ...state,
+    rules,
+    board,
+    players: state.players.map((p) => newPlayer(p, rules, board)),
+    deeds: {},
+    debts: [],
+    bankruptcies: [],
+    winnerId: undefined,
+    auction: undefined,
+    auctionQueue: undefined,
+    turn: undefined,
+    bank: { jackpot: 0 },
+    log: [],
+  };
+}
+
+function requireHostAtGameOver(state: GameState, playerId: string): void {
+  if (state.phase !== 'finished') throw new IllegalActionError('The game is not over');
+  if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can do that');
+}
+
+/** Same Players in a new random order (no roll-off), with the Defaults restored. */
+function rematch(state: GameState, playerId: string, rng: Rng, events: GameEvent[]): GameState {
+  requireHostAtGameOver(state, playerId);
+  const fresh = freshGame(state, structuredClone(defaultRules), structuredClone(defaultBoard));
+  const order = [...fresh.players];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = rng.int(i + 1);
+    [order[i], order[j]] = [order[j]!, order[i]!];
+  }
+  events.push({ type: 'GAME_STARTED' });
+  events.push({ type: 'TURN_ORDER_SET', playerIds: order.map((p) => p.id) });
+  events.push({ type: 'TURN_STARTED', playerId: order[0]!.id, round: 1 });
+  return {
+    ...fresh,
+    phase: 'playing',
+    players: order,
+    turn: { playerId: order[0]!.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1 },
+  };
+}
+
+/** Back to the Lobby with the Rules and Board as they were at the end of the game. */
+function backToLobby(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  requireHostAtGameOver(state, playerId);
+  events.push({ type: 'RETURNED_TO_LOBBY' });
+  return { ...freshGame(state, state.rules, state.board), phase: 'lobby' };
 }
 
 /**

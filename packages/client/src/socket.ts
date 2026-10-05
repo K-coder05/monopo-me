@@ -10,7 +10,11 @@ export type Intent =
   | 'BUY_PROPERTY'
   | 'DECLINE_PROPERTY'
   | 'PASS_AUCTION'
-  | 'END_TURN';
+  | 'END_TURN'
+  | 'PAY_DEBT'
+  | 'DECLARE_BANKRUPTCY'
+  | 'REMATCH'
+  | 'BACK_TO_LOBBY';
 
 /** Resolves with the server's error message, or null if it was accepted. */
 function toError(resolve: (error: string | null) => void): Ack {

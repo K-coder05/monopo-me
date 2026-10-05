@@ -70,6 +70,8 @@ export type Player = {
   jailTurns: number;
   /** For mustCompleteLapBeforeBuying. */
   hasPassedGo: boolean;
+  /** Out of the game; their row stays in `players` so turn order is kept. */
+  bankrupt: boolean;
 };
 
 /** Live ownership state of one property, kept separate from its Space definition. */
@@ -80,7 +82,22 @@ export type Deed = {
   mortgaged: boolean;
 };
 
-export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'auction' | 'awaitEndTurn';
+export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'auction' | 'awaitDebt' | 'awaitEndTurn';
+
+/** The other side of a Debt: one Player or the bank. */
+export type Creditor = { type: 'player'; playerId: string } | { type: 'bank' };
+
+/** An amount one Player owes one Creditor. Only Debts the debtor cannot cover wait in the queue. */
+export type Debt = {
+  debtorId: string;
+  creditor: Creditor;
+  amount: number;
+  /** A payment to the bank of the kind that fills the Jackpot (tax, jail fines). */
+  feedsJackpot: boolean;
+};
+
+/** What the active turn does once its Debts are settled (or the debtor is bankrupt). */
+export type AfterDebts = 'landingResolved' | { moveFromJail: number };
 
 export type Bid = { playerId: string; amount: number };
 
@@ -104,6 +121,8 @@ export type Turn = {
   doublesCount: number;
   lastRoll: number[];
   round: number;
+  /** Set while Debts are being settled. */
+  afterDebts?: AfterDebts;
 };
 
 /** How a Player was sent to Jail; cards add their own reason in the cards ticket. */
@@ -144,13 +163,18 @@ export type GameEvent =
   | { type: 'BUILDING_SOLD'; playerId: string; index: number; buildings: number; amount: number }
   | { type: 'PROPERTY_MORTGAGED'; playerId: string; index: number; amount: number }
   | { type: 'PROPERTY_UNMORTGAGED'; playerId: string; index: number; cost: number }
-  | { type: 'TURN_ENDED'; playerId: string };
+  | { type: 'TURN_ENDED'; playerId: string }
+  | { type: 'DEBT_OWED'; debtorId: string; creditor: Creditor; amount: number }
+  | { type: 'DEBT_PAID'; debtorId: string; creditor: Creditor; amount: number }
+  | { type: 'BANKRUPT'; playerId: string; creditor: Creditor }
+  | { type: 'GAME_OVER'; winnerId: string }
+  | { type: 'RETURNED_TO_LOBBY' };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
 export type GameState = {
   roomCode: string;
-  phase: 'lobby' | 'playing';
+  phase: 'lobby' | 'playing' | 'finished';
   hostId: string;
   rules: Rules;
   board: SpaceDefinition[];
@@ -161,6 +185,17 @@ export type GameState = {
   turn?: Turn;
   /** Present while the turn is at the 'auction' step. */
   auction?: Auction;
+  /** Debts waiting to be settled, in order; the first one is the one blocking play. */
+  debts: Debt[];
+  /** Bankrupt Players in the order they went out. */
+  bankruptcies: string[];
+  /** Set once the game is finished: the last Player not bankrupt. */
+  winnerId?: string;
+  /**
+   * Properties still to Auction after a Bankruptcy to the bank. Present (even when empty) while
+   * those Auctions run, so closing one knows to start the next instead of ending a landing.
+   */
+  auctionQueue?: number[];
   /** `jackpot` only fills while freeParkingMode is 'jackpot'. */
   bank: { jackpot: number };
   log: LogEntry[];
@@ -181,7 +216,12 @@ export type Action =
   | { type: 'SELL_BUILDING'; playerId: string; index: number }
   | { type: 'MORTGAGE'; playerId: string; index: number }
   | { type: 'UNMORTGAGE'; playerId: string; index: number }
-  | { type: 'END_TURN'; playerId: string };
+  | { type: 'END_TURN'; playerId: string }
+  | { type: 'PAY_DEBT'; playerId: string }
+  | { type: 'DECLARE_BANKRUPTCY'; playerId: string }
+  /** Host only, from the Game Over screen. */
+  | { type: 'REMATCH'; playerId: string }
+  | { type: 'BACK_TO_LOBBY'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

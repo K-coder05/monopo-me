@@ -89,6 +89,10 @@ io.on('connection', (socket: GameSocket) => {
     'DECLINE_PROPERTY',
     'PASS_AUCTION',
     'END_TURN',
+    'PAY_DEBT',
+    'DECLARE_BANKRUPTCY',
+    'REMATCH',
+    'BACK_TO_LOBBY',
   ] as const) {
     socket.on(type, (_msg, ack) =>
       handle(ack, () => {

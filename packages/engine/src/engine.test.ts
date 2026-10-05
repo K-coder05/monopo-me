@@ -634,12 +634,6 @@ describe('tax spaces', () => {
     expect(player(state, 'ann').cash).toBe(1425);
   });
 
-  it('lets cash go negative when the Player cannot afford the tax', () => {
-    const { state } = act(withPlayer(started(), 'ann', { cash: 50 }), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
-
-    expect(player(state, 'ann').cash).toBe(-150);
-  });
-
   it('does not feed the Jackpot when freeParkingMode is not jackpot', () => {
     const { state } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
 
@@ -1263,12 +1257,16 @@ describe('Jail', () => {
       expect(position(state, 'ann')).toBe(17);
     });
 
-    it('lets cash go negative when the Player cannot afford the forced fine', () => {
+    it('holds the move until the forced fine is paid, as a Debt, when the Player cannot afford it', () => {
       const game = withPlayer(failRolls(jailed(), 2), 'ann', { cash: 40 });
 
       const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+      expect(state.turn?.step).toBe('awaitDebt');
+      expect(player(state, 'ann')).toMatchObject({ cash: 40, inJail: false, position: 10 });
 
-      expect(player(state, 'ann').cash).toBe(-60);
+      const paid = act(withPlayer(state, 'ann', { cash: 150 }), { type: 'PAY_DEBT', playerId: 'ann' }).state;
+      expect(player(paid, 'ann').cash).toBe(50);
+      expect(position(paid, 'ann')).toBe(17);
     });
   });
 
@@ -1771,5 +1769,262 @@ describe('unmortgaging', () => {
     const lifted = unmortgage(game, 1).state;
 
     expect(act(lifted, { type: 'BUILD', playerId: 'ann', index: 1 }).state.deeds[1]?.buildings).toBe(1);
+  });
+});
+
+/** ann, bob and cat in a started game, ann first. */
+function started3(): GameState {
+  return act(lobby(['ann', 'bob', 'cat']), { type: 'START_GAME', playerId: 'ann' }, dice(6, 6, 3, 3, 1, 1)).state;
+}
+
+/** Puts the game at the Debt step with `debts` queued, as if a charge had left them unpaid. */
+function owing(state: GameState, debts: [debtor: string, creditor: string, amount: number][]): GameState {
+  return {
+    ...state,
+    debts: debts.map(([debtorId, creditor, amount]) => ({
+      debtorId,
+      creditor: creditor === 'bank' ? { type: 'bank' } : { type: 'player', playerId: creditor },
+      amount,
+      feedsJackpot: creditor === 'bank',
+    })),
+    turn: { ...state.turn!, step: 'awaitDebt', afterDebts: 'landingResolved' },
+  };
+}
+
+describe('Debts', () => {
+  /** ann (cash 2) rolls onto Baltic Avenue, which bob owns, for rent 4. */
+  function rentDebt() {
+    const game = owning(withPlayer(started3(), 'ann', { cash: 2 }), 'bob', [3]);
+    return act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+  }
+
+  it('queues a Debt instead of taking cash negative when rent is unaffordable', () => {
+    const state = rentDebt();
+
+    expect(state.turn?.step).toBe('awaitDebt');
+    expect(state.debts).toEqual([
+      { debtorId: 'ann', creditor: { type: 'player', playerId: 'bob' }, amount: 4, feedsJackpot: false },
+    ]);
+    expect(player(state, 'ann').cash).toBe(2);
+    expect(player(state, 'bob').cash).toBe(1500);
+  });
+
+  it('queues a Debt to the bank when a tax is unaffordable', () => {
+    const { state } = act(withPlayer(started3(), 'ann', { cash: 50 }), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
+
+    expect(state.turn?.step).toBe('awaitDebt');
+    expect(state.debts[0]).toMatchObject({ debtorId: 'ann', creditor: { type: 'bank' }, amount: 200 });
+    expect(player(state, 'ann').cash).toBe(50);
+  });
+
+  it('lets the debtor mortgage, then pay, and play continues', () => {
+    let state = owning(rentDebt(), 'ann', [1]);
+
+    state = act(state, { type: 'MORTGAGE', playerId: 'ann', index: 1 }).state;
+    const { state: paid, events } = act(state, { type: 'PAY_DEBT', playerId: 'ann' });
+
+    expect(events).toContainEqual({
+      type: 'DEBT_PAID',
+      debtorId: 'ann',
+      creditor: { type: 'player', playerId: 'bob' },
+      amount: 4,
+    });
+    expect(player(paid, 'ann').cash).toBe(28);
+    expect(player(paid, 'bob').cash).toBe(1504);
+    expect(paid.debts).toEqual([]);
+    expect(paid.turn).toMatchObject({ playerId: 'ann', step: 'awaitEndTurn' });
+  });
+
+  it('lets the debtor sell a building to cover it', () => {
+    let state = owning(rentDebt(), 'ann', [6, 8, 9]);
+    state = { ...state, deeds: { ...state.deeds, 9: { ownerId: 'ann', buildings: 1, mortgaged: false } } };
+    state = withPlayer(state, 'ann', { cash: 0 });
+
+    state = act(state, { type: 'SELL_BUILDING', playerId: 'ann', index: 9 }).state;
+
+    expect(player(state, 'ann').cash).toBe(25);
+    expect(act(state, { type: 'PAY_DEBT', playerId: 'ann' }).state.turn?.step).toBe('awaitEndTurn');
+  });
+
+  it('refuses to pay while short, and anything but selling and mortgaging meanwhile', () => {
+    const state = owning(rentDebt(), 'ann', [1]);
+
+    expect(() => act(state, { type: 'PAY_DEBT', playerId: 'ann' })).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'PAY_DEBT', playerId: 'bob' })).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2))).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'END_TURN', playerId: 'ann' })).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'UNMORTGAGE', playerId: 'ann', index: 1 })).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'MORTGAGE', playerId: 'bob', index: 3 })).toThrow(IllegalActionError);
+  });
+
+  it('refuses Bankruptcy to a Player who can cover the Debt', () => {
+    const state = withPlayer(rentDebt(), 'ann', { cash: 4 });
+
+    expect(() => act(state, { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('rounds a Debt up when the Player pays', () => {
+    const rules = { ...defaultRules, utilityMultipliers: [3.5] };
+    const game = owning(withPlayer(started3(), 'ann', { cash: 1, position: 9 }), 'bob', [12]);
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+    expect(state.debts[0]?.amount).toBe(11);
+  });
+
+  describe('a queue of several Debts', () => {
+    it('settles them in order, paying the affordable ones straight away', () => {
+      const game = withPlayer(owing(started3(), [['ann', 'bob', 100], ['ann', 'cat', 100]]), 'ann', { cash: 250 });
+
+      const { state } = act(game, { type: 'PAY_DEBT', playerId: 'ann' });
+
+      expect(player(state, 'bob').cash).toBe(1600);
+      expect(player(state, 'cat').cash).toBe(1600);
+      expect(player(state, 'ann').cash).toBe(50);
+      expect(state.turn?.step).toBe('awaitEndTurn');
+    });
+
+    it('stops at the next Debt the debtor cannot cover', () => {
+      const game = withPlayer(owing(started3(), [['ann', 'bob', 100], ['ann', 'cat', 100]]), 'ann', { cash: 100 });
+
+      const { state } = act(game, { type: 'PAY_DEBT', playerId: 'ann' });
+
+      expect(state.turn?.step).toBe('awaitDebt');
+      expect(state.debts.map((d) => d.creditor)).toEqual([{ type: 'player', playerId: 'cat' }]);
+    });
+
+    it('cancels the later Debts when Bankruptcy hits one mid-chain', () => {
+      const game = withPlayer(
+        owing(started3(), [['ann', 'bob', 100], ['ann', 'cat', 100], ['ann', 'bob', 5]]),
+        'ann',
+        { cash: 100 },
+      );
+      const { state: afterFirst } = act(game, { type: 'PAY_DEBT', playerId: 'ann' });
+
+      const { state } = act(afterFirst, { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' });
+
+      expect(state.debts).toEqual([]);
+      expect(player(state, 'bob').cash).toBe(1600);
+      expect(player(state, 'cat').cash).toBe(1500);
+    });
+  });
+});
+
+describe('Bankruptcy', () => {
+  function broke(creditor: string, extra: (s: GameState) => GameState = (s) => s) {
+    return extra(owing(withPlayer(started3(), 'ann', { cash: 7 }), [['ann', creditor, 500]]));
+  }
+
+  it('gives a Player Creditor the cash and properties as they are', () => {
+    const game = broke('bob', (s) => owning(owning(s, 'ann', [1], { mortgaged: true }), 'ann', [3]));
+
+    const { state, events } = act(game, { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' });
+
+    expect(events).toContainEqual({ type: 'BANKRUPT', playerId: 'ann', creditor: { type: 'player', playerId: 'bob' } });
+    expect(player(state, 'bob').cash).toBe(1507);
+    expect(state.deeds[1]).toEqual({ ownerId: 'bob', buildings: 0, mortgaged: true });
+    expect(state.deeds[3]).toEqual({ ownerId: 'bob', buildings: 0, mortgaged: false });
+    expect(player(state, 'ann')).toMatchObject({ bankrupt: true, cash: 0 });
+    expect(state.bankruptcies).toEqual(['ann']);
+  });
+
+  it('passes the turn on when the active Player goes out, then skips them', () => {
+    const { state } = act(broke('bob'), { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' });
+
+    expect(state.phase).toBe('playing');
+    expect(state.turn).toMatchObject({ playerId: 'bob', step: 'awaitRoll', round: 1 });
+
+    const afterBob = playTurn(state, 'bob', dice(1, 2));
+    expect(afterBob.turn?.playerId).toBe('cat');
+    expect(playTurn(afterBob, 'cat', dice(1, 2)).turn).toMatchObject({ playerId: 'bob', round: 2 });
+  });
+
+  it('Auctions a bank Creditor property by property, unmortgaged', () => {
+    const game = owning(owning(broke('bank'), 'ann', [1], { mortgaged: true }), 'ann', [3]);
+
+    const { state: first } = act(game, { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' }, noDice, defaultRules, 1000);
+
+    expect(first.deeds).toEqual({});
+    expect(first.turn?.step).toBe('auction');
+    expect(first.auction).toMatchObject({ index: 1, bidders: ['bob', 'cat'], endsAt: 11_000 });
+
+    const bid = act(first, { type: 'PLACE_BID', playerId: 'bob', amount: 10 }, noDice, defaultRules, 2000).state;
+    const second = act(bid, { type: 'PASS_AUCTION', playerId: 'cat' }, noDice, defaultRules, 3000).state;
+    expect(second.deeds[1]).toEqual({ ownerId: 'bob', buildings: 0, mortgaged: false });
+    expect(second.auction).toMatchObject({ index: 3 });
+
+    const done = act(second, { type: 'EXPIRE_AUCTION' }, noDice, defaultRules, 20_000).state;
+    expect(done.deeds[3]).toBeUndefined();
+    expect(done.auction).toBeUndefined();
+    expect(done.turn).toMatchObject({ playerId: 'bob', step: 'awaitRoll' });
+  });
+
+  it('lets play go on for the active Player when another Player goes out', () => {
+    const game = withPlayer(owing(started3(), [['bob', 'cat', 500]]), 'bob', { cash: 0 });
+
+    const { state } = act(game, { type: 'DECLARE_BANKRUPTCY', playerId: 'bob' });
+
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitEndTurn' });
+  });
+
+  it('ends the game when one Player is left, recording the order of bankruptcy', () => {
+    const first = act(broke('cat'), { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' }).state;
+    const second = withPlayer(owing(first, [['bob', 'cat', 5000]]), 'bob', { cash: 1 });
+
+    const { state, events } = act(second, { type: 'DECLARE_BANKRUPTCY', playerId: 'bob' });
+
+    expect(events).toContainEqual({ type: 'GAME_OVER', winnerId: 'cat' });
+    expect(state).toMatchObject({ phase: 'finished', winnerId: 'cat', bankruptcies: ['ann', 'bob'] });
+    expect(state.turn).toBeUndefined();
+    expect(() => act(state, { type: 'ROLL_DICE', playerId: 'cat' }, dice(1, 2))).toThrow(IllegalActionError);
+  });
+});
+
+describe('Game Over', () => {
+  function finished(): GameState {
+    const rules = { ...defaultRules, startingCash: 900, goSalary: 7 };
+    const game = owning(withPlayer({ ...started3(), rules }, 'ann', { cash: 7 }), 'ann', [1]);
+    const first = act(owing(game, [['ann', 'cat', 500]]), { type: 'DECLARE_BANKRUPTCY', playerId: 'ann' }).state;
+    return act(withPlayer(owing(first, [['bob', 'cat', 5000]]), 'bob', { cash: 1 }), {
+      type: 'DECLARE_BANKRUPTCY',
+      playerId: 'bob',
+    }).state;
+  }
+
+  it('lets only the Host choose, and only once the game is over', () => {
+    expect(() => act(started3(), { type: 'REMATCH', playerId: 'ann' })).toThrow(IllegalActionError);
+    expect(() => act(finished(), { type: 'REMATCH', playerId: 'bob' })).toThrow(IllegalActionError);
+    expect(() => act(finished(), { type: 'BACK_TO_LOBBY', playerId: 'bob' })).toThrow(IllegalActionError);
+  });
+
+  it('Rematch restarts the same Players in a random order from the Defaults', () => {
+    const game = finished();
+    expect(game.rules.startingCash).toBe(900);
+
+    // Shuffling [ann, bob, cat] with every draw 0 swaps the last into place each time: cat, ann, bob.
+    const { state } = act(game, { type: 'REMATCH', playerId: 'ann' }, { int: () => 0 });
+
+    expect(state.rules).toEqual(defaultRules);
+    expect(state.board).toEqual(defaultBoard);
+    expect(state.phase).toBe('playing');
+    expect(state.players.map((p) => p.id).sort()).toEqual(['ann', 'bob', 'cat']);
+    expect(state.players.map((p) => p.id)).toEqual(['bob', 'cat', 'ann']);
+    expect(state.players.every((p) => p.cash === 1500 && !p.bankrupt && p.position === 0)).toBe(true);
+    expect(state.deeds).toEqual({});
+    expect(state.bankruptcies).toEqual([]);
+    expect(state.winnerId).toBeUndefined();
+    expect(state.turn).toMatchObject({ playerId: 'bob', step: 'awaitRoll', round: 1 });
+  });
+
+  it('Back to Lobby keeps the Rules and Board but resets the Players', () => {
+    const { state } = act(finished(), { type: 'BACK_TO_LOBBY', playerId: 'ann' });
+
+    expect(state.phase).toBe('lobby');
+    expect(state.rules.startingCash).toBe(900);
+    expect(state.players.map((p) => p.cash)).toEqual([900, 900, 900]);
+    expect(state.players.some((p) => p.bankrupt)).toBe(false);
+    expect(state.deeds).toEqual({});
+    expect(state.turn).toBeUndefined();
+    expect(state.winnerId).toBeUndefined();
   });
 });
