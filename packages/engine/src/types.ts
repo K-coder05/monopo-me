@@ -276,6 +276,8 @@ export type Turn = {
    * the step that turn goes back to afterwards.
    */
   resumeStep?: TurnStep;
+  /** Server time (ms) when the turn timer runs out; set while turnTimerSeconds is on and the step is one it covers. */
+  timerEndsAt?: number;
 };
 
 export type JailReason = 'goToJail' | 'doubles' | 'card';
@@ -358,6 +360,8 @@ export type GameEvent =
   | { type: 'TRADE_WITHDRAWN'; trade: Trade }
   | { type: 'TRADE_COMPLETED'; trade: Trade }
   | { type: 'TURN_ENDED'; playerId: string }
+  /** The turn timer ran out; the engine takes the step's default action for the Player. */
+  | { type: 'TURN_TIMED_OUT'; playerId: string }
   | { type: 'CARD_DRAWN'; playerId: string; deck: DeckKind; cardId: string; title: string; text: string }
   | { type: 'DECK_EMPTY'; playerId: string; deck: DeckKind }
   | { type: 'CARD_CONTINUED'; playerId: string; choiceId?: string }
@@ -462,6 +466,8 @@ export type Action =
   | { type: 'PASS_AUCTION'; playerId: string }
   /** Sent by the server's countdown, not by a Player. */
   | { type: 'EXPIRE_AUCTION' }
+  /** Sent by the server's turn timer, not by a Player. */
+  | { type: 'EXPIRE_TURN' }
   | { type: 'BUILD'; playerId: string; index: number }
   | { type: 'SELL_BUILDING'; playerId: string; index: number }
   | { type: 'MORTGAGE'; playerId: string; index: number }

@@ -31,6 +31,7 @@ import type {
   Trade,
   TradeSide,
   Turn,
+  TurnStep,
 } from './types';
 
 /** Thrown when an Action is not legal in the current state. The state is left unchanged. */
@@ -88,7 +89,7 @@ export function createGame(
   return appendLog(state, [{ type: 'PLAYER_JOINED', playerId: host.id }]);
 }
 
-/** `now` is the server's clock in ms; the engine reads it only for Auction countdowns. */
+/** `now` is the server's clock in ms; the engine reads it only for Auction countdowns and the turn timer. */
 export function applyAction(state: GameState, action: Action, rules: Rules, rng: Rng, now: number): ActionResult {
   const events: GameEvent[] = [];
   if (state.paused && !WHILE_PAUSED.has(action.type)) throw new IllegalActionError('The game is paused');
@@ -126,6 +127,9 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'EXPIRE_AUCTION':
       next = expireAuction(state, rules, now, events);
+      break;
+    case 'EXPIRE_TURN':
+      next = expireTurn(state, rules, rng, now, events);
       break;
     case 'BUILD':
       next = build(state, action.playerId, action.index, rules, events);
@@ -232,7 +236,52 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
   const isEdit =
     action.type === 'UPDATE_RULES' || action.type === 'UPDATE_BOARD' || action.type === 'RESET_TO_DEFAULTS' || action.type === 'LOAD_PRESET';
   next = applyPending(next, events, isEdit);
+  next = syncTurnTimer(state, next, events, now);
   return { state: appendLog(next, events), events };
+}
+
+/** The steps the turn timer covers. Auctions have their own countdown; Debts and cards wait. */
+const TIMED_STEPS = new Set<TurnStep>(['awaitRoll', 'awaitBuyDecision', 'awaitEndTurn']);
+
+/**
+ * Keeps the turn timer in line with the game after `events` took it from `before` to `after`. A
+ * new turn, step or roll gets a full countdown; anything else (an open Trade included: only its
+ * response is untimed) leaves it running. It is off during Auctions, Debts and cards, and whenever
+ * turnTimerSeconds is 0. A countdown that starts while paused (the Host turning the timer on)
+ * counts from the pause, so resuming gives it in full.
+ */
+export function syncTurnTimer(before: GameState, after: GameState, events: GameEvent[], now: number): GameState {
+  const turn = after.turn;
+  if (!turn) return after;
+  const full = after.rules.turnTimerSeconds * 1000;
+  if (full <= 0 || !TIMED_STEPS.has(turn.step) || after.debts.length > 0) {
+    return turn.timerEndsAt === undefined ? after : { ...after, turn: { ...turn, timerEndsAt: undefined } };
+  }
+  const was = before.turn;
+  const fresh =
+    turn.timerEndsAt === undefined ||
+    was?.playerId !== turn.playerId ||
+    was.step !== turn.step ||
+    events.some((e) => e.type === 'DICE_ROLLED' || e.type === 'TURN_STARTED');
+  if (!fresh) return after;
+  return { ...after, turn: { ...turn, timerEndsAt: (after.paused?.at ?? now) + full } };
+}
+
+/** The turn timer has run out: the engine takes the default action for the step the turn is at. */
+function expireTurn(state: GameState, rules: Rules, rng: Rng, now: number, events: GameEvent[]): GameState {
+  const turn = requirePlaying(state);
+  if (turn.timerEndsAt === undefined || now < turn.timerEndsAt) throw new IllegalActionError('The turn timer has not run out');
+  events.push({ type: 'TURN_TIMED_OUT', playerId: turn.playerId });
+  switch (turn.step) {
+    case 'awaitRoll':
+      return roll(state, turn.playerId, rules, rng, events);
+    case 'awaitBuyDecision':
+      return decline(state, turn.playerId, rules, now, events);
+    case 'awaitEndTurn':
+      return endTurn(state, turn.playerId, events);
+    default:
+      throw new IllegalActionError('The turn timer has not run out');
+  }
 }
 
 /**
@@ -279,16 +328,23 @@ function pause(state: GameState, playerId: string, now: number, events: GameEven
 }
 
 /**
- * Play carries on where it stopped. An open Auction gets back the time it had left when paused;
- * one that opened during the pause (a Player leaving) gets its full countdown.
+ * Play carries on where it stopped. An open Auction or turn timer gets back the time it had left
+ * when paused; one that started during the pause gets its full countdown.
  */
 function resume(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
   requireHost(state, playerId);
   if (!state.paused) throw new IllegalActionError('The game is not paused');
   events.push({ type: 'GAME_RESUMED' });
   const { auction } = state;
-  const left = auction && Math.min(Math.max(0, auction.endsAt - state.paused.at), rules.auctionSeconds * 1000);
-  return { ...state, paused: undefined, auction: auction && { ...auction, endsAt: now + left! } };
+  const { at } = state.paused;
+  const left = (endsAt: number, full: number) => Math.min(Math.max(0, endsAt - at), full);
+  const { turn } = state;
+  return {
+    ...state,
+    paused: undefined,
+    auction: auction && { ...auction, endsAt: now + left(auction.endsAt, rules.auctionSeconds * 1000) },
+    turn: turn?.timerEndsAt === undefined ? turn : { ...turn, timerEndsAt: now + left(turn.timerEndsAt, rules.turnTimerSeconds * 1000) },
+  };
 }
 
 /** The Host role passes to another Player who is still in the game (any Player outside a game). */

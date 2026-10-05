@@ -23,6 +23,7 @@ import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
 import { TradeModal, tradePartners } from './TradeModal';
 import { describeBuildings, groupColor } from './spaces';
+import { useSecondsLeft } from './useSecondsLeft';
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
 function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
@@ -32,6 +33,16 @@ function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
     groups.set(key, [...(groups.get(key) ?? []), s]);
   }
   return [...groups];
+}
+
+/** The active turn's countdown, shown to everyone. The server runs the turn timer; this only displays it. */
+function TurnTimer({ endsAt, paused, label, clockOffset }: { endsAt: number; paused: boolean; label: string; clockOffset: number }) {
+  const seconds = useSecondsLeft(endsAt, clockOffset);
+  return (
+    <p className="turn-timer" aria-live="polite">
+      {label}: <strong>{paused ? 'Paused' : `${seconds}s`}</strong>
+    </p>
+  );
 }
 
 export function Game({ game, me, clockOffset, away }: { game: GameState; me: string; clockOffset: number; away: string[] }) {
@@ -118,6 +129,14 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         </ul>
         {game.spectators.length > 0 && <p className="muted">Watching: {game.spectators.map((s) => s.name).join(', ')}</p>}
         {spectating && <p className="notice">You are watching as a Spectator. The Host can add you as a Player.</p>}
+        {turn.timerEndsAt !== undefined && (
+          <TurnTimer
+            endsAt={turn.timerEndsAt}
+            paused={!!game.paused}
+            label={myTurn ? 'Your turn' : `${activeName}'s turn`}
+            clockOffset={clockOffset}
+          />
+        )}
         {game.paused && (
           <p className="banner" role="status">
             The Host has paused the game.

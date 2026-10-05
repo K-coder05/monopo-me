@@ -49,14 +49,14 @@ export class Rooms {
   private readonly histories = new Map<string, GameState[]>();
   /** Open connections per Player, by Room then Player. */
   private readonly connections = new Map<string, Map<string, number>>();
-  /** The pending Auction countdown for each Room that has one open. */
+  /** The pending Auction countdown or turn timer for each Room that has one running. */
   private readonly countdowns = new Map<string, ReturnType<typeof setTimeout>>();
   /** For each Room whose Host has no open connection: since when, and the check due when time is up. */
   private readonly hostAway = new Map<string, { hostId: string; since: number; timer: ReturnType<typeof setTimeout> }>();
 
   /**
-   * `onTimer` receives changes the server makes on its own, such as an Auction running out, a
-   * Player who drops counting as passed, or the Host role passing on.
+   * `onTimer` receives changes the server makes on its own, such as an Auction or turn running
+   * out, a Player who drops counting as passed, or the Host role passing on.
    */
   constructor(
     private readonly onTimer: (roomCode: string, result: ActionResult) => void,
@@ -291,28 +291,28 @@ export class Rooms {
   }
 
   /**
-   * (Re)starts the Room's Auction countdown to match its state; every bid moves the deadline. No
-   * countdown runs while the game is paused.
+   * (Re)starts the Room's countdown to match its state: the open Auction's (every bid moves it), or
+   * else the turn timer's. Nothing counts down while the game is paused.
    */
   private scheduleCountdown(roomCode: string, state: GameState) {
     clearTimeout(this.countdowns.get(roomCode));
     this.countdowns.delete(roomCode);
-    if (!state.auction || state.paused) return;
-    const delay = Math.max(0, state.auction.endsAt - this.now());
+    const due = deadline(state);
+    if (!due) return;
     this.countdowns.set(
       roomCode,
       setTimeout(() => {
         this.countdowns.delete(roomCode);
         // Timers can fire slightly early against the wall clock; wait out the rest rather than
-        // have the engine refuse the expiry and leave the Auction stuck open.
-        if (this.now() < state.auction!.endsAt) return this.scheduleCountdown(roomCode, state);
+        // have the engine refuse the expiry and leave the game stuck.
+        if (this.now() < due.at) return this.scheduleCountdown(roomCode, state);
         // A throw here would escape to the event loop and take the server down.
         try {
-          this.onTimer(roomCode, this.act(roomCode, { type: 'EXPIRE_AUCTION' }));
+          this.onTimer(roomCode, this.act(roomCode, due.action));
         } catch (err) {
           console.error(err);
         }
-      }, delay),
+      }, Math.max(0, due.at - this.now())),
     );
   }
 
@@ -324,6 +324,14 @@ export class Rooms {
       if (!this.rooms.has(code)) return code;
     }
   }
+}
+
+/** When the Room's running countdown is up (server ms), and what the server then does. */
+function deadline(state: GameState): { at: number; action: Action } | undefined {
+  if (state.paused) return undefined;
+  if (state.auction) return { at: state.auction.endsAt, action: { type: 'EXPIRE_AUCTION' } };
+  const endsAt = state.turn?.timerEndsAt;
+  return endsAt === undefined ? undefined : { at: endsAt, action: { type: 'EXPIRE_TURN' } };
 }
 
 function validPlayer(name: unknown, color: unknown): { name: string; color: string } {

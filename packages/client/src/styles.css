@@ -466,6 +466,11 @@ button.small {
   margin: 0;
 }
 
+.turn-timer {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .auction .countdown {
   font-size: 2rem;
   font-weight: bold;

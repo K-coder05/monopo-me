@@ -1,20 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Auction, GameState } from '@landlord/engine';
 import { placeBid, send } from './socket';
+import { useSecondsLeft } from './useSecondsLeft';
 
 const RAISES = [1, 10, 50, 100];
-
-/** Seconds left until `endsAt` on the server clock, re-rendering as it counts down. */
-function useSecondsLeft(endsAt: number, clockOffset: number): number {
-  const left = () => Math.max(0, Math.ceil((endsAt - (Date.now() + clockOffset)) / 1000));
-  const [seconds, setSeconds] = useState(left);
-  useEffect(() => {
-    setSeconds(left());
-    const id = setInterval(() => setSeconds(left()), 250);
-    return () => clearInterval(id);
-  }, [endsAt, clockOffset]);
-  return seconds;
-}
 
 /** Shown to everyone while an Auction is open. The server runs the countdown; this only displays it. */
 export function AuctionModal({

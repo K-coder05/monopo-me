@@ -150,6 +150,8 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `Trade: ${name(event.trade.proposerId)} gave ${side(event.trade.give)}; ${name(event.trade.partnerId)} gave ${side(event.trade.take)}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
+    case 'TURN_TIMED_OUT':
+      return `${name(event.playerId)} ran out of time`;
     case 'CARD_DRAWN':
       return `${name(event.playerId)} drew ${event.deck === 'chance' ? 'Chance' : 'Treasure'}: ${event.title}. ${event.text}`;
     case 'DECK_EMPTY':

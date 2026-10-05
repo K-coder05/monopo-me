@@ -1,4 +1,4 @@
-import { appendLog, departing, IllegalActionError } from './engine';
+import { appendLog, departing, IllegalActionError, syncTurnTimer } from './engine';
 import { applyPending } from './edits';
 import { wantedCopies } from './cardEdits';
 import type { Action, ActionResult, Deck, DeckKind, GameEvent, GameState } from './types';
@@ -41,8 +41,8 @@ export function recordUndo(history: GameState[], before: GameState, after: GameS
 
 /**
  * Host only: restores the game state of the last snapshot. The Rules, Board and Decks stay as
- * they are now, the log carries on, and randomness is not rewound. An Auction it goes back into
- * gets a fresh countdown from `now`.
+ * they are now, the log carries on, and randomness is not rewound. An Auction or turn it goes back
+ * into gets a fresh countdown from `now`.
  */
 export function undo(state: GameState, history: GameState[], playerId: string, now: number): ActionResult & { history: GameState[] } {
   if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can Undo');
@@ -65,6 +65,7 @@ export function undo(state: GameState, history: GameState[], playerId: string, n
     rulesChangedMidGame: state.rulesChangedMidGame,
     decksHidden: state.decksHidden,
     decks: state.decks,
+    turn: snapshot.turn && { ...snapshot.turn, timerEndsAt: undefined },
     auction: snapshot.auction && { ...snapshot.auction, endsAt: now + state.rules.auctionSeconds * 1000 },
     log: state.log,
   };
@@ -72,6 +73,8 @@ export function undo(state: GameState, history: GameState[], playerId: string, n
   for (const kind of ['chance', 'treasure'] as const) restored = withSettledPile(restored, kind);
   // Edits waiting for an action the Undo went back past now apply.
   restored = applyPending(restored, events, false);
+  // With no deadline, the restored turn's countdown starts afresh.
+  restored = syncTurnTimer(state, restored, events, now);
   return { state: appendLog(restored, events), events, history: history.slice(0, -1) };
 }
 
