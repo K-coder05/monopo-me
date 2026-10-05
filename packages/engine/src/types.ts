@@ -73,7 +73,19 @@ export type Player = {
 /** Live ownership state of one property, kept separate from its Space definition. */
 export type Deed = { ownerId: string; buildings: number; mortgaged: boolean };
 
-export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'awaitEndTurn';
+export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'auction' | 'awaitEndTurn';
+
+export type Bid = { playerId: string; amount: number };
+
+/** Open bidding for one unowned property. */
+export type Auction = {
+  index: number;
+  /** Players still in, in turn order. Passing removes a Player for good. */
+  bidders: string[];
+  highBid?: Bid;
+  /** Server time (ms) when the countdown runs out; restarts on every bid. */
+  endsAt: number;
+};
 
 export type Turn = {
   playerId: string;
@@ -98,6 +110,11 @@ export type GameEvent =
   | { type: 'PROPERTY_DECLINED'; playerId: string; index: number }
   | { type: 'RENT_PAID'; playerId: string; ownerId: string; index: number; amount: number }
   | { type: 'RENT_WAIVED'; playerId: string; ownerId: string; index: number; reason: 'mortgaged' | 'ownerInJail' }
+  | { type: 'AUCTION_STARTED'; index: number; endsAt: number }
+  | { type: 'BID_PLACED'; playerId: string; amount: number; endsAt: number }
+  | { type: 'AUCTION_PASSED'; playerId: string }
+  | { type: 'AUCTION_WON'; playerId: string; index: number; amount: number }
+  | { type: 'AUCTION_UNSOLD'; index: number }
   | { type: 'TURN_ENDED'; playerId: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
@@ -113,6 +130,8 @@ export type GameState = {
   /** Keyed by space index; a property with no Deed belongs to the bank. */
   deeds: Record<number, Deed>;
   turn?: Turn;
+  /** Present while the turn is at the 'auction' step. */
+  auction?: Auction;
   log: LogEntry[];
 };
 
@@ -122,6 +141,10 @@ export type Action =
   | { type: 'ROLL_DICE'; playerId: string }
   | { type: 'BUY_PROPERTY'; playerId: string }
   | { type: 'DECLINE_PROPERTY'; playerId: string }
+  | { type: 'PLACE_BID'; playerId: string; amount: number }
+  | { type: 'PASS_AUCTION'; playerId: string }
+  /** Sent by the server's countdown, not by a Player. */
+  | { type: 'EXPIRE_AUCTION' }
   | { type: 'END_TURN'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */

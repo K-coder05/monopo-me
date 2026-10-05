@@ -32,14 +32,14 @@ function lobby(names: string[], rules: Rules = defaultRules): GameState {
   const [host, ...others] = names;
   let state = createGame('ABCDE', { id: host!, name: host!, color: `${host}-colour` }, rules, defaultBoard);
   for (const name of others) {
-    state = applyAction(state, { type: 'JOIN_ROOM', playerId: name, name, color: `${name}-colour` }, rules, noDice)
-      .state;
+    state = act(state, { type: 'JOIN_ROOM', playerId: name, name, color: `${name}-colour` }, noDice, rules).state;
   }
   return state;
 }
 
-function act(state: GameState, action: Action, rng: Rng = noDice, rules: Rules = defaultRules) {
-  return applyAction(state, action, rules, rng);
+/** Applies `action` at time `now` (ms). */
+function act(state: GameState, action: Action, rng: Rng = noDice, rules: Rules = defaultRules, now = 0) {
+  return applyAction(state, action, rules, rng, now);
 }
 
 describe('roll-off', () => {
@@ -103,10 +103,11 @@ function position(state: GameState, playerId: string) {
   return state.players.find((p) => p.id === playerId)!.position;
 }
 
-/** Rolls, declines any property offered, and ends the turn. */
+/** Rolls, declines any property offered (everyone passes in the Auction), and ends the turn. */
 function playTurn(state: GameState, playerId: string, rng: Rng): GameState {
   let next = act(state, { type: 'ROLL_DICE', playerId }, rng).state;
   if (next.turn?.step === 'awaitBuyDecision') next = act(next, { type: 'DECLINE_PROPERTY', playerId }).state;
+  for (const bidder of next.auction?.bidders ?? []) next = act(next, { type: 'PASS_AUCTION', playerId: bidder }).state;
   return act(next, { type: 'END_TURN', playerId }).state;
 }
 
@@ -333,10 +334,11 @@ describe('buying property', () => {
     expect(player(state, 'ann').cash).toBe(1425);
   });
 
-  it('ends the decision without a Deed when the Player declines', () => {
-    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+  it('ends the decision without a Deed when the Player declines and auctionOnDecline is off', () => {
+    const rules = { ...defaultRules, auctionOnDecline: false };
+    const landed = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules).state;
 
-    const { state, events } = act(landed, { type: 'DECLINE_PROPERTY', playerId: 'ann' });
+    const { state, events } = act(landed, { type: 'DECLINE_PROPERTY', playerId: 'ann' }, noDice, rules);
 
     expect(state.deeds[3]).toBeUndefined();
     expect(player(state, 'ann').cash).toBe(1500);
@@ -510,5 +512,198 @@ describe('mustCompleteLapBeforeBuying', () => {
     const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
 
     expect(player(state, 'ann').cash).toBe(1496);
+  });
+});
+
+describe('auctions', () => {
+  const COUNTDOWN = defaultRules.auctionSeconds * 1000;
+
+  /** ann, bob and cat in a started game (that order); ann landed on Baltic Avenue (3) and declined at t=0. */
+  function auction(rules: Rules = defaultRules): GameState {
+    // ann 12, bob 7, cat 2
+    const lobbied = lobby(['ann', 'bob', 'cat'], rules);
+    let state = act(lobbied, { type: 'START_GAME', playerId: 'ann' }, dice(6, 6, 3, 4, 1, 1), rules).state;
+    state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules).state;
+    return act(state, { type: 'DECLINE_PROPERTY', playerId: 'ann' }, noDice, rules, 0).state;
+  }
+
+  const bid = (state: GameState, playerId: string, amount: number, now = 0, rules = defaultRules) =>
+    act(state, { type: 'PLACE_BID', playerId, amount }, noDice, rules, now);
+  const pass = (state: GameState, playerId: string) => act(state, { type: 'PASS_AUCTION', playerId });
+  const expire = (state: GameState, now: number) => act(state, { type: 'EXPIRE_AUCTION' }, noDice, defaultRules, now);
+
+  it('opens an Auction to every Player, including the one who declined', () => {
+    const state = auction();
+
+    expect(state.turn?.step).toBe('auction');
+    expect(state.auction).toEqual({ index: 3, bidders: ['ann', 'bob', 'cat'], endsAt: COUNTDOWN });
+    expect(state.log.map((e) => e.event)).toContainEqual({ type: 'AUCTION_STARTED', index: 3, endsAt: COUNTDOWN });
+  });
+
+  it('does not let the active Player end their turn while the Auction is open', () => {
+    expect(() => act(auction(), { type: 'END_TURN', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('does not let anyone buy or decline during the Auction', () => {
+    const state = auction();
+
+    expect(() => act(state, { type: 'BUY_PROPERTY', playerId: 'ann' })).toThrow(IllegalActionError);
+    expect(() => act(state, { type: 'DECLINE_PROPERTY', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('records the highest bid and its leader', () => {
+    const { state, events } = bid(auction(), 'bob', 20, 1000);
+
+    expect(state.auction?.highBid).toEqual({ playerId: 'bob', amount: 20 });
+    expect(events).toEqual([{ type: 'BID_PLACED', playerId: 'bob', amount: 20, endsAt: 1000 + COUNTDOWN }]);
+  });
+
+  it('rejects a bid that does not beat the current bid', () => {
+    const state = bid(auction(), 'bob', 20).state;
+
+    expect(() => bid(state, 'cat', 19)).toThrow(IllegalActionError);
+    expect(() => bid(state, 'cat', 20)).toThrow(IllegalActionError);
+  });
+
+  it('rejects a bid below auctionStartBid', () => {
+    const rules = { ...defaultRules, auctionStartBid: 10 };
+
+    expect(() => bid(auction(rules), 'bob', 9, 0, rules)).toThrow(IllegalActionError);
+    expect(bid(auction(rules), 'bob', 10, 0, rules).state.auction?.highBid?.amount).toBe(10);
+  });
+
+  it.each([0, -5, 2.5, Number.NaN])('rejects a bid of %d', (amount) => {
+    expect(() => bid(auction(), 'bob', amount)).toThrow(IllegalActionError);
+  });
+
+  it('does not let a Player bid more than their cash', () => {
+    const state = withPlayer(auction(), 'bob', { cash: 50 });
+
+    expect(() => bid(state, 'bob', 51)).toThrow(IllegalActionError);
+    expect(bid(state, 'bob', 50).state.auction?.highBid?.amount).toBe(50);
+  });
+
+  it('does not let the leader outbid themselves', () => {
+    const state = bid(auction(), 'bob', 20).state;
+
+    expect(() => bid(state, 'bob', 30)).toThrow(IllegalActionError);
+  });
+
+  it('restarts the countdown on each bid', () => {
+    let state = bid(auction(), 'bob', 20, 4000).state;
+    expect(state.auction?.endsAt).toBe(4000 + COUNTDOWN);
+    state = bid(state, 'cat', 30, 9000).state;
+
+    expect(state.auction?.endsAt).toBe(9000 + COUNTDOWN);
+    // The first deadline has passed, but the restarted countdown has not.
+    expect(() => expire(state, 4000 + COUNTDOWN)).toThrow(IllegalActionError);
+  });
+
+  it('reads the countdown length from the Rules', () => {
+    const rules = { ...defaultRules, auctionSeconds: 3 };
+
+    expect(auction(rules).auction?.endsAt).toBe(3000);
+    expect(bid(auction(rules), 'bob', 5, 1000, rules).state.auction?.endsAt).toBe(4000);
+  });
+
+  it('sells to the highest bidder when the countdown expires', () => {
+    let state = bid(auction(), 'bob', 20, 1000).state;
+    state = bid(state, 'cat', 30, 2000).state;
+
+    const { state: next, events } = expire(state, 2000 + COUNTDOWN);
+
+    expect(next.deeds[3]).toEqual({ ownerId: 'cat', buildings: 0, mortgaged: false });
+    expect(player(next, 'cat').cash).toBe(1470);
+    expect(player(next, 'bob').cash).toBe(1500);
+    expect(next.auction).toBeUndefined();
+    expect(next.turn).toMatchObject({ playerId: 'ann', step: 'awaitEndTurn' });
+    expect(events).toEqual([{ type: 'AUCTION_WON', playerId: 'cat', index: 3, amount: 30 }]);
+  });
+
+  it('does not expire before the countdown runs out', () => {
+    expect(() => expire(auction(), COUNTDOWN - 1)).toThrow(IllegalActionError);
+  });
+
+  it('cannot expire when no Auction is open', () => {
+    expect(() => expire(started(), 999_999)).toThrow(IllegalActionError);
+  });
+
+  it('keeps the property with the bank when nobody bids', () => {
+    const { state, events } = expire(auction(), COUNTDOWN);
+
+    expect(state.deeds[3]).toBeUndefined();
+    expect(state.players.map((p) => p.cash)).toEqual([1500, 1500, 1500]);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([{ type: 'AUCTION_UNSOLD', index: 3 }]);
+  });
+
+  it('keeps the property with the bank when everyone passes', () => {
+    let state = pass(auction(), 'ann').state;
+    state = pass(state, 'bob').state;
+    const { state: next, events } = pass(state, 'cat');
+
+    expect(next.deeds[3]).toBeUndefined();
+    expect(next.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([
+      { type: 'AUCTION_PASSED', playerId: 'cat' },
+      { type: 'AUCTION_UNSOLD', index: 3 },
+    ]);
+  });
+
+  it('makes passing final', () => {
+    const state = pass(auction(), 'bob').state;
+
+    expect(state.auction?.bidders).toEqual(['ann', 'cat']);
+    expect(() => bid(state, 'bob', 20)).toThrow(IllegalActionError);
+    expect(() => pass(state, 'bob')).toThrow(IllegalActionError);
+  });
+
+  it('ends the Auction when only the leader remains', () => {
+    let state = bid(auction(), 'bob', 20).state;
+    state = pass(state, 'ann').state;
+
+    const { state: next, events } = pass(state, 'cat');
+
+    expect(next.deeds[3]?.ownerId).toBe('bob');
+    expect(player(next, 'bob').cash).toBe(1480);
+    expect(next.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([
+      { type: 'AUCTION_PASSED', playerId: 'cat' },
+      { type: 'AUCTION_WON', playerId: 'bob', index: 3, amount: 20 },
+    ]);
+  });
+
+  it('lets the last Player in bid when nobody has yet, selling to them at once', () => {
+    let state = pass(auction(), 'bob').state;
+    state = pass(state, 'cat').state;
+    expect(state.turn?.step).toBe('auction');
+
+    const { state: next } = bid(state, 'ann', 5);
+
+    expect(next.deeds[3]?.ownerId).toBe('ann');
+    expect(player(next, 'ann').cash).toBe(1495);
+  });
+
+  it('does not let the leader pass', () => {
+    const state = bid(auction(), 'bob', 20).state;
+
+    expect(() => pass(state, 'bob')).toThrow(IllegalActionError);
+  });
+
+  it('lets the declining Player win the Auction', () => {
+    let state = bid(auction(), 'bob', 20).state;
+    state = bid(state, 'ann', 25).state;
+
+    const { state: next } = expire(state, COUNTDOWN);
+
+    expect(next.deeds[3]?.ownerId).toBe('ann');
+    expect(player(next, 'ann').cash).toBe(1475);
+  });
+
+  it('only allows bids and passes while an Auction is open', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    expect(() => bid(landed, 'bob', 20)).toThrow(IllegalActionError);
+    expect(() => pass(landed, 'bob')).toThrow(IllegalActionError);
   });
 });

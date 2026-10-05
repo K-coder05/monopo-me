@@ -34,6 +34,16 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return event.reason === 'mortgaged'
         ? `No rent: ${space(event.index)} is mortgaged`
         : `No rent: ${name(event.ownerId)} is in Jail`;
+    case 'AUCTION_STARTED':
+      return `Auction for ${space(event.index)} is open to everyone`;
+    case 'BID_PLACED':
+      return `${name(event.playerId)} bid ${event.amount}`;
+    case 'AUCTION_PASSED':
+      return `${name(event.playerId)} passed`;
+    case 'AUCTION_WON':
+      return `${name(event.playerId)} won ${space(event.index)} at auction for ${event.amount}`;
+    case 'AUCTION_UNSOLD':
+      return `Nobody bid; ${space(event.index)} stays with the bank`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
   }

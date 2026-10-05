@@ -4,6 +4,7 @@ import { send, type Intent } from './socket';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
+import { AuctionModal } from './AuctionModal';
 import { groupColor } from './spaces';
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
@@ -16,7 +17,7 @@ function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
   return [...groups];
 }
 
-export function Game({ game, me }: { game: GameState; me: string }) {
+export function Game({ game, me, clockOffset }: { game: GameState; me: string; clockOffset: number }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const closeDeed = useCallback(() => setSelected(null), []);
@@ -118,6 +119,9 @@ export function Game({ game, me }: { game: GameState; me: string }) {
           </div>
         </div>
       )}
+
+      {/* Stays up under an open title deed so nobody loses the countdown while checking the property. */}
+      {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

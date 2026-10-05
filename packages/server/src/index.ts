@@ -20,14 +20,14 @@ type GameSocket = Socket<ClientToServer, ServerToClient, Record<string, never>, 
 const app = express();
 const httpServer = createServer(app);
 const io = new Server<ClientToServer, ServerToClient, Record<string, never>, SocketData>(httpServer);
-const rooms = new Rooms();
+const rooms = new Rooms(broadcast);
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
 function broadcast(roomCode: string, { state, events }: ActionResult) {
-  io.to(roomCode).emit('STATE', { state, events });
+  io.to(roomCode).emit('STATE', { state, events, serverNow: Date.now() });
 }
 
 /** Runs `fn`, reporting illegal actions back to the sender instead of crashing. */
@@ -80,7 +80,14 @@ io.on('connection', (socket: GameSocket) => {
   );
 
   // Intents act for the Player bound to this connection; any playerId in the payload is ignored.
-  for (const type of ['START_GAME', 'ROLL_DICE', 'BUY_PROPERTY', 'DECLINE_PROPERTY', 'END_TURN'] as const) {
+  for (const type of [
+    'START_GAME',
+    'ROLL_DICE',
+    'BUY_PROPERTY',
+    'DECLINE_PROPERTY',
+    'PASS_AUCTION',
+    'END_TURN',
+  ] as const) {
     socket.on(type, (_msg, ack) =>
       handle(ack, () => {
         const { roomCode, playerId } = requirePlayer(socket);
@@ -89,6 +96,15 @@ io.on('connection', (socket: GameSocket) => {
       }),
     );
   }
+
+  // The engine validates the amount (whole number, above the current bid, within cash).
+  socket.on('PLACE_BID', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'PLACE_BID', playerId, amount: Number(msg?.amount) }));
+      return {};
+    }),
+  );
 });
 
 httpServer.listen(PORT, () => {

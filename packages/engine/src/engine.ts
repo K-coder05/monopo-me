@@ -1,6 +1,7 @@
 import type {
   Action,
   ActionResult,
+  Auction,
   GameEvent,
   GameState,
   Player,
@@ -37,7 +38,8 @@ export function createGame(
   return appendLog(state, [{ type: 'PLAYER_JOINED', playerId: host.id }]);
 }
 
-export function applyAction(state: GameState, action: Action, rules: Rules, rng: Rng): ActionResult {
+/** `now` is the server's clock in ms; the engine reads it only for Auction countdowns. */
+export function applyAction(state: GameState, action: Action, rules: Rules, rng: Rng, now: number): ActionResult {
   const events: GameEvent[] = [];
   let next: GameState;
   switch (action.type) {
@@ -54,7 +56,16 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       next = buy(state, action.playerId, events);
       break;
     case 'DECLINE_PROPERTY':
-      next = decline(state, action.playerId, events);
+      next = decline(state, action.playerId, rules, now, events);
+      break;
+    case 'PLACE_BID':
+      next = placeBid(state, action.playerId, action.amount, rules, now, events);
+      break;
+    case 'PASS_AUCTION':
+      next = passAuction(state, action.playerId, events);
+      break;
+    case 'EXPIRE_AUCTION':
+      next = expireAuction(state, now, events);
       break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
@@ -221,10 +232,95 @@ function buy(state: GameState, playerId: string, events: GameEvent[]): GameState
   };
 }
 
-function decline(state: GameState, playerId: string, events: GameEvent[]): GameState {
+function decline(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
   const turn = requireTurn(state, playerId, 'awaitBuyDecision');
-  events.push({ type: 'PROPERTY_DECLINED', playerId, index: findPlayer(state, playerId).position });
-  return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
+  const index = findPlayer(state, playerId).position;
+  events.push({ type: 'PROPERTY_DECLINED', playerId, index });
+  if (!rules.auctionOnDecline) return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
+
+  const endsAt = countdownEnd(rules, now);
+  events.push({ type: 'AUCTION_STARTED', index, endsAt });
+  return {
+    ...state,
+    turn: { ...turn, step: 'auction' },
+    auction: { index, bidders: state.players.map((p) => p.id), endsAt },
+  };
+}
+
+/** When an Auction countdown started (or restarted) at `now` runs out. */
+function countdownEnd(rules: Rules, now: number): number {
+  return now + rules.auctionSeconds * 1000;
+}
+
+/** Checks that an Auction is open and `playerId` is still in it; returns the Auction. */
+function requireBidder(state: GameState, playerId: string): Auction {
+  const auction = requireAuction(state);
+  if (!auction.bidders.includes(playerId)) throw new IllegalActionError('You are out of this Auction');
+  return auction;
+}
+
+function requireAuction(state: GameState): Auction {
+  if (state.turn?.step !== 'auction' || !state.auction) throw new IllegalActionError('No Auction is open');
+  return state.auction;
+}
+
+function placeBid(
+  state: GameState,
+  playerId: string,
+  amount: number,
+  rules: Rules,
+  now: number,
+  events: GameEvent[],
+): GameState {
+  const auction = requireBidder(state, playerId);
+  const { highBid } = auction;
+  if (!Number.isInteger(amount) || amount < 1) throw new IllegalActionError('A bid must be a whole number above 0');
+  if (highBid?.playerId === playerId) throw new IllegalActionError('You already have the highest bid');
+  if (amount < rules.auctionStartBid) throw new IllegalActionError(`Bidding starts at ${rules.auctionStartBid}`);
+  if (highBid && amount <= highBid.amount) throw new IllegalActionError(`You must bid more than ${highBid.amount}`);
+  const cash = findPlayer(state, playerId).cash;
+  if (amount > cash) throw new IllegalActionError(`You cannot bid more than your cash (${cash})`);
+
+  const endsAt = countdownEnd(rules, now);
+  events.push({ type: 'BID_PLACED', playerId, amount, endsAt });
+  return settleIfDecided({ ...state, auction: { ...auction, highBid: { playerId, amount }, endsAt } }, events);
+}
+
+function passAuction(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  const auction = requireBidder(state, playerId);
+  if (auction.highBid?.playerId === playerId) throw new IllegalActionError('You cannot pass while you have the highest bid');
+  events.push({ type: 'AUCTION_PASSED', playerId });
+  return settleIfDecided({ ...state, auction: { ...auction, bidders: auction.bidders.filter((id) => id !== playerId) } }, events);
+}
+
+function expireAuction(state: GameState, now: number, events: GameEvent[]): GameState {
+  const auction = requireAuction(state);
+  if (now < auction.endsAt) throw new IllegalActionError('The Auction countdown has not run out');
+  return settleAuction(state, auction, events);
+}
+
+/**
+ * Ends the Auction once nobody can change the result: everyone has passed, or the only
+ * Player left holds the highest bid. A lone Player with no bid yet may still bid.
+ */
+function settleIfDecided(state: GameState, events: GameEvent[]): GameState {
+  const auction = state.auction!;
+  const [last, ...others] = auction.bidders;
+  const decided = last === undefined || (others.length === 0 && auction.highBid?.playerId === last);
+  return decided ? settleAuction(state, auction, events) : state;
+}
+
+/** The highest bidder pays and takes the Deed; with no bids the property stays with the bank. */
+function settleAuction(state: GameState, { index, highBid }: Auction, events: GameEvent[]): GameState {
+  const closed: GameState = { ...state, auction: undefined, turn: { ...state.turn!, step: 'awaitEndTurn' } };
+  if (!highBid) {
+    events.push({ type: 'AUCTION_UNSOLD', index });
+    return closed;
+  }
+  const { playerId, amount } = highBid;
+  events.push({ type: 'AUCTION_WON', playerId, index, amount });
+  const paid = updatePlayer(closed, playerId, (p) => ({ ...p, cash: p.cash - amount }));
+  return { ...paid, deeds: { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } } };
 }
 
 /** Streets, stations and utilities: the spaces that can have a Deed. */

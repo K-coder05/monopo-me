@@ -393,6 +393,23 @@ button.link {
   font-size: 1.2rem;
 }
 
+.auction p {
+  margin: 0;
+}
+
+.auction .countdown {
+  font-size: 2rem;
+  font-weight: bold;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.auction .raises {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.4rem;
+}
+
 .deed header {
   margin: -1rem -1rem 0;
   padding: 0.75rem 1rem;

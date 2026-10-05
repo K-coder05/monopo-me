@@ -14,11 +14,14 @@ export type ClientToServer = {
   ROLL_DICE: (msg: object, ack: Ack) => void;
   BUY_PROPERTY: (msg: object, ack: Ack) => void;
   DECLINE_PROPERTY: (msg: object, ack: Ack) => void;
+  PLACE_BID: (msg: { amount: number }, ack: Ack) => void;
+  PASS_AUCTION: (msg: object, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
 };
 
 export type ServerToClient = {
-  STATE: (msg: { state: GameState; events: GameEvent[] }) => void;
+  /** `serverNow` is the server clock (ms) at send time, so clients can show countdowns despite clock skew. */
+  STATE: (msg: { state: GameState; events: GameEvent[]; serverNow: number }) => void;
 };
 
 export const ROOM_CODE_LENGTH = 5;

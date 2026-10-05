@@ -23,8 +23,15 @@ export const serverRng: Rng = { int: (maxExclusive) => randomInt(maxExclusive) }
 /** In-memory Rooms. Every change goes through the engine. */
 export class Rooms {
   private readonly rooms = new Map<string, GameState>();
+  /** The pending Auction countdown for each Room that has one open. */
+  private readonly countdowns = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private readonly rng: Rng = serverRng) {}
+  /** `onTimer` receives changes the server makes on its own, such as an Auction running out. */
+  constructor(
+    private readonly onTimer: (roomCode: string, result: ActionResult) => void,
+    private readonly rng: Rng = serverRng,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   create(name: string, color: string): JoinedRoom & ActionResult {
     const host = { id: randomUUID(), ...validPlayer(name, color) };
@@ -45,9 +52,33 @@ export class Rooms {
   act(roomCode: string, action: Action): ActionResult {
     const state = this.rooms.get(roomCode);
     if (!state) throw new IllegalActionError(`No Room with code ${roomCode}`);
-    const result = applyAction(state, action, state.rules, this.rng);
+    const result = applyAction(state, action, state.rules, this.rng, this.now());
     this.rooms.set(roomCode, result.state);
+    this.scheduleCountdown(roomCode, result.state);
     return result;
+  }
+
+  /** (Re)starts the Room's Auction countdown to match its state; every bid moves the deadline. */
+  private scheduleCountdown(roomCode: string, state: GameState) {
+    clearTimeout(this.countdowns.get(roomCode));
+    this.countdowns.delete(roomCode);
+    if (!state.auction) return;
+    const delay = Math.max(0, state.auction.endsAt - this.now());
+    this.countdowns.set(
+      roomCode,
+      setTimeout(() => {
+        this.countdowns.delete(roomCode);
+        // Timers can fire slightly early against the wall clock; wait out the rest rather than
+        // have the engine refuse the expiry and leave the Auction stuck open.
+        if (this.now() < state.auction!.endsAt) return this.scheduleCountdown(roomCode, state);
+        // A throw here would escape to the event loop and take the server down.
+        try {
+          this.onTimer(roomCode, this.act(roomCode, { type: 'EXPIRE_AUCTION' }));
+        } catch (err) {
+          console.error(err);
+        }
+      }, delay),
+    );
   }
 
   private freshCode(): string {
