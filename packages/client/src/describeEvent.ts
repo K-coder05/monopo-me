@@ -1,3 +1,4 @@
+import { DECK_LABELS } from './cardLabels';
 import { RULE_LABELS, SPACE_FIELD_LABELS, showValue } from './ruleLabels';
 import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason, type TradeSide } from '@landlord/engine';
 
@@ -146,5 +147,23 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return 'Host reset Rules and Board to the defaults';
     case 'CHANGES_QUEUED':
       return "Host's changes will apply when the current action finishes";
+    case 'CARD_ADDED':
+      return `Host added ${DECK_LABELS[event.deck]} card "${event.title}"${event.text ? `: ${event.text}` : ''}`;
+    case 'CARD_EDITED':
+      return `Host edited ${DECK_LABELS[event.deck]} card "${event.title}"${event.text ? `: ${event.text}` : ''}`;
+    case 'CARD_COPIES_CHANGED':
+      return `Host changed copies of ${DECK_LABELS[event.deck]} card "${event.title}": ${event.from} → ${event.to}`;
+    case 'CARD_ENABLED_CHANGED':
+      return `Host ${event.enabled ? 'enabled' : 'disabled'} ${DECK_LABELS[event.deck]} card "${event.title}"`;
+    case 'CARD_DELETED':
+      return `Host deleted ${DECK_LABELS[event.deck]} card "${event.title}"`;
+    case 'HELD_CARD_REMOVED':
+      return `Host took "${event.title}" away from ${name(event.playerId)}`;
+    case 'DECK_RESET':
+      return `Host reset the ${DECK_LABELS[event.deck]} deck to the defaults`;
+    case 'DECK_SHUFFLED':
+      return `Host shuffled the ${DECK_LABELS[event.deck]} deck`;
+    case 'DECK_CONTENTS_HIDDEN':
+      return event.hidden ? 'Host hid the deck contents' : 'Host made the deck contents visible';
   }
 }

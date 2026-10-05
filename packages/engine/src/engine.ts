@@ -1,4 +1,5 @@
 import { defaultBoard, defaultCards, defaultRules } from './defaults';
+import { addCard, copiesInPlay, deleteCard, editCard, hideDeckContents, resetDeck, shuffleDeck, wantedCopies } from './cardEdits';
 import { applyPending, resetToDefaults, updateBoard, updateRules } from './edits';
 import type {
   Action,
@@ -165,6 +166,24 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'RESET_TO_DEFAULTS':
       next = resetToDefaults(state, action.playerId);
+      break;
+    case 'ADD_CARD':
+      next = addCard(state, action.playerId, action.deck, action.card, rng, events);
+      break;
+    case 'DELETE_CARD':
+      next = deleteCard(state, action.playerId, action.cardId, action.held, rng, events);
+      break;
+    case 'RESET_DECK':
+      next = resetDeck(state, action.playerId, action.deck, rng, events);
+      break;
+    case 'SHUFFLE_DECK':
+      next = shuffleDeck(state, action.playerId, action.deck, rng, events);
+      break;
+    case 'HIDE_DECK_CONTENTS':
+      next = hideDeckContents(state, action.playerId, action.hidden, events);
+      break;
+    case 'EDIT_CARD':
+      next = editCard(state, action.playerId, action.cardId, action.card, action.held, rng, events);
       break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
@@ -1143,7 +1162,7 @@ function roundDown(x: number): number {
   return Math.floor(x + 1e-9);
 }
 
-function shuffle<T>(items: T[], rng: Rng): T[] {
+export function shuffle<T>(items: T[], rng: Rng): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = rng.int(i + 1);
@@ -1164,14 +1183,19 @@ function findCard(state: GameState, cardId: string): Card | undefined {
   return [...state.decks.chance.cards, ...state.decks.treasure.cards].find((c) => c.id === cardId);
 }
 
-/** Puts each card at the bottom of its Deck. */
+/**
+ * Puts each card at the bottom of its Deck, unless the Host has since deleted or disabled it or
+ * lowered its copies (a held card the Host let a Player keep is then gone once used).
+ */
 function returnCards(state: GameState, cardIds: string[]): GameState {
-  const decks = { ...state.decks };
+  let next = state;
   for (const id of cardIds) {
-    const kind = findCard(state, id)?.deck;
-    if (kind) decks[kind] = { ...decks[kind], drawPile: [...decks[kind].drawPile, id] };
+    const card = findCard(next, id);
+    if (!card || copiesInPlay(next, card) >= wantedCopies(card)) continue;
+    const deck = next.decks[card.deck];
+    next = { ...next, decks: { ...next.decks, [card.deck]: { ...deck, drawPile: [...deck.drawPile, id] } } };
   }
-  return { ...state, decks };
+  return next;
 }
 
 function giveCards(state: GameState, playerId: string, cardIds: string[]): GameState {

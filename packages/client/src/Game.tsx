@@ -14,6 +14,7 @@ import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
 import { RulesPanel } from './RulesPanel';
+import { CardsPanel } from './CardsPanel';
 import { AuctionModal } from './AuctionModal';
 import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
@@ -35,6 +36,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
   const [selected, setSelected] = useState<number | null>(null);
   const [building, setBuilding] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [cardsOpen, setCardsOpen] = useState(false);
   const closeDeed = useCallback(() => setSelected(null), []);
   const closeBuilder = useCallback(() => setBuilding(false), []);
   const turn = game.turn!;
@@ -125,6 +127,9 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
           </button>
           <button className="secondary" onClick={() => setRulesOpen(true)}>
             Rules
+          </button>
+          <button className="secondary" onClick={() => setCardsOpen(true)}>
+            Cards
           </button>
         </div>
         {game.rulesChangedMidGame && <p className="banner">Rules changed during this game. Open Rules to see the current values.</p>}
@@ -246,6 +251,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
       {game.turn?.step === 'awaitCard' && <CardModal game={game} me={me} />}
 
       {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
+      {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
 
       {selected !== null && <TitleDeed game={game} index={selected} onClose={closeDeed} />}
     </main>

@@ -8,8 +8,22 @@ import { GameOver } from './GameOver';
 import { describeEvent } from './describeEvent';
 
 const TOAST_MS = 6000;
-const isRuleChange = (e: GameEvent) =>
-  e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED' || e.type === 'DEFAULTS_RESTORED' || e.type === 'CHANGES_QUEUED';
+const HOST_EDITS: GameEvent['type'][] = [
+  'RULE_CHANGED',
+  'SPACE_CHANGED',
+  'DEFAULTS_RESTORED',
+  'CHANGES_QUEUED',
+  'CARD_ADDED',
+  'CARD_EDITED',
+  'CARD_COPIES_CHANGED',
+  'CARD_ENABLED_CHANGED',
+  'CARD_DELETED',
+  'HELD_CARD_REMOVED',
+  'DECK_RESET',
+  'DECK_SHUFFLED',
+  'DECK_CONTENTS_HIDDEN',
+];
+const isHostEdit = (e: GameEvent) => HOST_EDITS.includes(e.type);
 
 let nextToastId = 0;
 
@@ -20,7 +34,7 @@ export function App() {
   const [clockOffset, setClockOffset] = useState(0);
   // Players with no open connection.
   const [away, setAway] = useState<string[]>([]);
-  // Rules and Board changes, shown to everyone for a few seconds.
+  // Rules, Board and card changes, shown to everyone for a few seconds.
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
@@ -28,7 +42,7 @@ export function App() {
       setGame(state);
       // A reset is one toast, not one per value it changed.
       const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED');
-      const fresh = events.filter((e) => isRuleChange(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
+      const fresh = events.filter((e) => isHostEdit(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
       if (fresh.length > 0) {
         setToasts((current) => [...current, ...fresh]);
         setTimeout(() => setToasts((current) => current.filter((t) => !fresh.some((f) => f.id === t.id))), TOAST_MS);

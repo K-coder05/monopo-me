@@ -124,6 +124,15 @@ export type Card = {
   copies: number;
 };
 
+/** The fields of a Card the Host fills in; the id, deck and `keepable` come from the engine. */
+export type CardDraft = Pick<Card, 'title' | 'text' | 'effects' | 'enabled' | 'copies'>;
+
+/**
+ * What happens to held copies a card edit takes out of play: the Players keep them until used, or
+ * lose them now. Required only when the edit touches a held card.
+ */
+export type HeldCardChoice = 'keep' | 'remove';
+
 export type Deck = {
   cards: Card[];
   /** Card ids, top first; a card appears once per copy. Drawn cards go to the bottom. */
@@ -309,7 +318,17 @@ export type GameEvent =
   | { type: 'SPACE_CHANGED'; index: number; field: SpaceField; from: SpaceDefinition[SpaceField]; to: SpaceDefinition[SpaceField] }
   | { type: 'DEFAULTS_RESTORED' }
   /** The Host's edits wait for the current Auction, Debt or Card to finish. */
-  | { type: 'CHANGES_QUEUED' };
+  | { type: 'CHANGES_QUEUED' }
+  // Card edits: `text` is left out while deck contents are hidden.
+  | { type: 'CARD_ADDED'; deck: DeckKind; cardId: string; title: string; text?: string }
+  | { type: 'CARD_EDITED'; deck: DeckKind; cardId: string; title: string; text?: string }
+  | { type: 'CARD_COPIES_CHANGED'; deck: DeckKind; cardId: string; title: string; from: number; to: number }
+  | { type: 'CARD_ENABLED_CHANGED'; deck: DeckKind; cardId: string; title: string; enabled: boolean }
+  | { type: 'CARD_DELETED'; deck: DeckKind; cardId: string; title: string }
+  | { type: 'HELD_CARD_REMOVED'; playerId: string; cardId: string; title: string }
+  | { type: 'DECK_RESET'; deck: DeckKind }
+  | { type: 'DECK_SHUFFLED'; deck: DeckKind }
+  | { type: 'DECK_CONTENTS_HIDDEN'; hidden: boolean };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
@@ -342,6 +361,8 @@ export type GameState = {
   /** Players owed an extra turn by a card, in order; each plays right after the current turn. */
   extraTurns: string[];
   decks: Decks;
+  /** "Hide deck contents": only the Host may browse the Decks, and card edits are announced by title. */
+  decksHidden?: boolean;
   /** Host edits to Rules or Board that arrived mid-action; applied once the action finishes. */
   pendingEdit?: PendingEdit;
   /** Set once Rules or Board change during a game; drives the banner. */
@@ -385,7 +406,15 @@ export type Action =
   /** Host only. */
   | { type: 'UPDATE_BOARD'; playerId: string; edits: SpaceEdit[] }
   /** Host only: the built-in Defaults for Rules and Board. */
-  | { type: 'RESET_TO_DEFAULTS'; playerId: string };
+  | { type: 'RESET_TO_DEFAULTS'; playerId: string }
+  // Card editor, Host only. Card edits apply at once; a card being resolved finishes as it was.
+  | { type: 'ADD_CARD'; playerId: string; deck: DeckKind; card: CardDraft }
+  | { type: 'EDIT_CARD'; playerId: string; cardId: string; card: CardDraft; held?: HeldCardChoice }
+  | { type: 'DELETE_CARD'; playerId: string; cardId: string; held?: HeldCardChoice }
+  /** The built-in Default cards for one Deck, freshly shuffled. */
+  | { type: 'RESET_DECK'; playerId: string; deck: DeckKind }
+  | { type: 'SHUFFLE_DECK'; playerId: string; deck: DeckKind }
+  | { type: 'HIDE_DECK_CONTENTS'; playerId: string; hidden: boolean };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

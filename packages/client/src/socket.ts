@@ -1,5 +1,17 @@
 import { io, type Socket } from 'socket.io-client';
-import type { Ack, ClientToServer, PropertyIntent, Rules, ServerToClient, RejoinKey, SpaceEdit, TradeSide } from '@landlord/engine';
+import type {
+  Ack,
+  CardDraft,
+  ClientToServer,
+  DeckKind,
+  HeldCardChoice,
+  PropertyIntent,
+  Rules,
+  ServerToClient,
+  RejoinKey,
+  SpaceEdit,
+  TradeSide,
+} from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
 
@@ -90,4 +102,34 @@ export function updateRules(changes: Partial<Rules>): Promise<string | null> {
 /** Host only: sends staged Space definition changes. Resolves like `send`. */
 export function updateBoard(edits: SpaceEdit[]): Promise<string | null> {
   return new Promise((resolve) => socket.emit('UPDATE_BOARD', { edits }, toError(resolve)));
+}
+
+/** Host only: adds a card to a Deck. Resolves like `send`. */
+export function addCard(deck: DeckKind, card: CardDraft): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('ADD_CARD', { deck, card }, toError(resolve)));
+}
+
+/** Host only: saves a card's form; `held` answers what happens to copies a Player holds. Resolves like `send`. */
+export function editCard(cardId: string, card: CardDraft, held?: HeldCardChoice): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('EDIT_CARD', { cardId, card, held }, toError(resolve)));
+}
+
+/** Host only: deletes a card; `held` as for `editCard`. Resolves like `send`. */
+export function deleteCard(cardId: string, held?: HeldCardChoice): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('DELETE_CARD', { cardId, held }, toError(resolve)));
+}
+
+/** Host only: puts back the Default cards for a Deck, freshly shuffled. Resolves like `send`. */
+export function resetDeck(deck: DeckKind): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('RESET_DECK', { deck }, toError(resolve)));
+}
+
+/** Host only: shuffles a Deck's draw pile now. Resolves like `send`. */
+export function shuffleDeck(deck: DeckKind): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('SHUFFLE_DECK', { deck }, toError(resolve)));
+}
+
+/** Host only: turns "hide deck contents" on or off. Resolves like `send`. */
+export function hideDeckContents(hidden: boolean): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('HIDE_DECK_CONTENTS', { hidden }, toError(resolve)));
 }

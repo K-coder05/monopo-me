@@ -2,7 +2,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { IllegalActionError, type Rng } from '@landlord/engine';
+import { IllegalActionError, type CardDraft, type Rng } from '@landlord/engine';
 import { IDLE_EXPIRY_MS, Rooms } from './rooms';
 
 let n = 0;
@@ -55,6 +55,18 @@ describe('Rooms persistence and reconnect', () => {
 
     expect(open().get(host.roomCode)!.rules.goSalary).toBe(400);
     expect(rooms.get(other.roomCode)!.rules.goSalary).toBe(200);
+  });
+
+  it('keeps card edits per Room and across a restart, and refuses a non-host', () => {
+    const rooms = open();
+    const host = rooms.create('Ann', COLORS[0]);
+    const bob = rooms.join(host.roomCode, 'Bob', COLORS[1]);
+    const card: CardDraft = { title: 'Windfall', text: 'Collect 5.', effects: [{ type: 'TRANSFER', amount: 5, from: 'bank', to: 'drawer' }], enabled: true, copies: 1 };
+
+    expect(() => rooms.act(host.roomCode, { type: 'ADD_CARD', playerId: bob.playerId, deck: 'chance', card })).toThrow(IllegalActionError);
+    rooms.act(host.roomCode, { type: 'ADD_CARD', playerId: host.playerId, deck: 'chance', card });
+
+    expect(open().get(host.roomCode)!.decks.chance.cards.map((c) => c.title)).toContain('Windfall');
   });
 
   it('tracks who is connected', () => {

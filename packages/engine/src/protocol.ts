@@ -1,4 +1,4 @@
-import type { GameEvent, GameState, Rules, SpaceEdit, TradeSide } from './types';
+import type { CardDraft, DeckKind, GameEvent, GameState, HeldCardChoice, Rules, SpaceEdit, TradeSide } from './types';
 
 /** Socket messages shared by server and client. */
 
@@ -50,11 +50,18 @@ export type ClientToServer = {
   UPDATE_BOARD: (msg: { edits: SpaceEdit[] }, ack: Ack) => void;
   /** Restores the built-in Defaults for Rules and Board. */
   RESET_TO_DEFAULTS: (msg: object, ack: Ack) => void;
+  // Card editor, Host only. `held` answers what happens to copies a Player holds, when asked.
+  ADD_CARD: (msg: { deck: DeckKind; card: CardDraft }, ack: Ack) => void;
+  EDIT_CARD: (msg: { cardId: string; card: CardDraft; held?: HeldCardChoice }, ack: Ack) => void;
+  DELETE_CARD: (msg: { cardId: string; held?: HeldCardChoice }, ack: Ack) => void;
+  RESET_DECK: (msg: { deck: DeckKind }, ack: Ack) => void;
+  SHUFFLE_DECK: (msg: { deck: DeckKind }, ack: Ack) => void;
+  HIDE_DECK_CONTENTS: (msg: { hidden: boolean }, ack: Ack) => void;
 };
 
 export type ServerToClient = {
   /** `serverNow` is the server clock (ms) at send time, so clients can show countdowns despite clock skew. */
-  /** `away` lists the Players with no open connection. */
+  /** `away` lists the Players with no open connection. `state` is as this connection may see it (see viewFor). */
   STATE: (msg: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => void;
 };
 

@@ -618,3 +618,88 @@ button.small {
   color: white;
   border-radius: 6px;
 }
+
+.tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+}
+
+.hide-toggle {
+  display: block;
+  margin-top: 0.5rem;
+}
+
+.card-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.card-list > li {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.card-list > li.disabled {
+  opacity: 0.55;
+}
+
+.card-list p {
+  margin: 0.25rem 0;
+}
+
+.card-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-row-head label {
+  margin-left: auto;
+}
+
+.effect-summary {
+  margin: 0.25rem 0;
+  padding-left: 1.2rem;
+}
+
+.card-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+}
+
+.card-form label,
+.effect-row label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.card-form input:not([type='checkbox']),
+.card-form textarea,
+.card-form select {
+  width: 14rem;
+}
+
+.effect-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.preview {
+  width: auto;
+  align-self: center;
+}

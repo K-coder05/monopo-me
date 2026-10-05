@@ -4,6 +4,7 @@ import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import {
   IllegalActionError,
+  viewFor,
   type Ack,
   type ActionResult,
   type ClientToServer,
@@ -32,8 +33,14 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+/** Sends each connection in the Room the state as its Player may see it (hidden Decks stay with the Host). */
 function broadcast(roomCode: string, { state, events }: ActionResult) {
-  io.to(roomCode).emit('STATE', { state, events, serverNow: Date.now(), away: rooms.away(roomCode) });
+  const serverNow = Date.now();
+  const away = rooms.away(roomCode);
+  for (const id of io.sockets.adapter.rooms.get(roomCode) ?? []) {
+    const socket = io.sockets.sockets.get(id);
+    socket?.emit('STATE', { state: viewFor(state, socket.data.player?.playerId), events, serverNow, away });
+  }
 }
 
 /** Runs `fn`, reporting illegal actions back to the sender instead of crashing. */
@@ -159,6 +166,50 @@ io.on('connection', (socket: GameSocket) => {
     handle(ack, () => {
       const { roomCode, playerId } = requirePlayer(socket);
       broadcast(roomCode, rooms.act(roomCode, { type: 'UPDATE_BOARD', playerId, edits: msg?.edits ?? [] }));
+      return {};
+    }),
+  );
+
+  // Card editor: the engine checks the sender is the Host and validates every field and Effect.
+  socket.on('ADD_CARD', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'ADD_CARD', playerId, deck: msg?.deck, card: msg?.card }));
+      return {};
+    }),
+  );
+
+  socket.on('EDIT_CARD', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      const action = { type: 'EDIT_CARD', playerId, cardId: msg?.cardId, card: msg?.card, held: msg?.held } as const;
+      broadcast(roomCode, rooms.act(roomCode, action));
+      return {};
+    }),
+  );
+
+  socket.on('DELETE_CARD', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'DELETE_CARD', playerId, cardId: msg?.cardId, held: msg?.held }));
+      return {};
+    }),
+  );
+
+  for (const type of ['RESET_DECK', 'SHUFFLE_DECK'] as const) {
+    socket.on(type, (msg, ack) =>
+      handle(ack, () => {
+        const { roomCode, playerId } = requirePlayer(socket);
+        broadcast(roomCode, rooms.act(roomCode, { type, playerId, deck: msg?.deck }));
+        return {};
+      }),
+    );
+  }
+
+  socket.on('HIDE_DECK_CONTENTS', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'HIDE_DECK_CONTENTS', playerId, hidden: msg?.hidden }));
       return {};
     }),
   );
