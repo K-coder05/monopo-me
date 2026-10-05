@@ -29,7 +29,7 @@ function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
   return [...groups];
 }
 
-export function Game({ game, me, clockOffset }: { game: GameState; me: string; clockOffset: number }) {
+export function Game({ game, me, clockOffset, away }: { game: GameState; me: string; clockOffset: number; away: string[] }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [building, setBuilding] = useState(false);
@@ -78,6 +78,11 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
                 {p.name}
                 {p.id === me && ' (you)'}
               </span>
+              {away.includes(p.id) && (
+                <span className="away" title="Not connected right now">
+                  Away
+                </span>
+              )}
               {p.heldCards.length > 0 && (
                 <span className="muted" title="Get-out-of-jail cards held">
                   {p.heldCards.length} jail card{p.heldCards.length > 1 ? 's' : ''}

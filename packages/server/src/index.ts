@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import {
@@ -7,6 +8,7 @@ import {
   type ActionResult,
   type ClientToServer,
   type JoinedRoom,
+  type RejoinKey,
   type PropertyIntent,
   type TradeSide,
   type ServerToClient,
@@ -14,6 +16,7 @@ import {
 import { Rooms } from './rooms';
 
 const PORT = Number(process.env.PORT ?? 3001);
+const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data', 'rooms');
 
 /** The one Player this connection controls (ADR 0001). */
 type SocketData = { player?: JoinedRoom };
@@ -22,14 +25,15 @@ type GameSocket = Socket<ClientToServer, ServerToClient, Record<string, never>, 
 const app = express();
 const httpServer = createServer(app);
 const io = new Server<ClientToServer, ServerToClient, Record<string, never>, SocketData>(httpServer);
-const rooms = new Rooms(broadcast);
+const rooms = new Rooms(broadcast, undefined, undefined, DATA_DIR);
+setInterval(() => rooms.expireIdle(), 60 * 60 * 1000).unref();
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
 function broadcast(roomCode: string, { state, events }: ActionResult) {
-  io.to(roomCode).emit('STATE', { state, events, serverNow: Date.now() });
+  io.to(roomCode).emit('STATE', { state, events, serverNow: Date.now(), away: rooms.away(roomCode) });
 }
 
 /** Runs `fn`, reporting illegal actions back to the sender instead of crashing. */
@@ -58,12 +62,17 @@ function requireNoPlayer(socket: GameSocket) {
   if (socket.data.player) throw new IllegalActionError('This connection is already in a Room');
 }
 
-/** Binds the connection to its new Player, subscribes it to the Room and broadcasts the Room's state. */
-function bindAndBroadcast(socket: GameSocket, result: JoinedRoom & ActionResult): JoinedRoom {
-  socket.data.player = { roomCode: result.roomCode, playerId: result.playerId };
-  void socket.join(result.roomCode);
-  broadcast(result.roomCode, result);
-  return socket.data.player;
+/** Binds the connection to its Player, subscribes it to the Room and broadcasts the Room's state. */
+function bind(socket: GameSocket, { roomCode, playerId }: JoinedRoom, result: ActionResult) {
+  socket.data.player = { roomCode, playerId };
+  rooms.connect(roomCode, playerId);
+  void socket.join(roomCode);
+  broadcast(roomCode, result);
+}
+
+function bindNew(socket: GameSocket, result: RejoinKey & ActionResult): RejoinKey {
+  bind(socket, result, result);
+  return { roomCode: result.roomCode, playerId: result.playerId, token: result.token };
 }
 
 /** Coerces untrusted socket input into a TradeSide; the engine checks the values. */
@@ -80,16 +89,34 @@ io.on('connection', (socket: GameSocket) => {
   socket.on('CREATE_ROOM', (msg, ack) =>
     handle(ack, () => {
       requireNoPlayer(socket);
-      return bindAndBroadcast(socket, rooms.create(msg?.name, msg?.color));
+      return bindNew(socket, rooms.create(msg?.name, msg?.color));
     }),
   );
 
   socket.on('JOIN_ROOM', (msg, ack) =>
     handle(ack, () => {
       requireNoPlayer(socket);
-      return bindAndBroadcast(socket, rooms.join(String(msg?.roomCode ?? ''), msg?.name, msg?.color));
+      return bindNew(socket, rooms.join(String(msg?.roomCode ?? ''), msg?.name, msg?.color));
     }),
   );
+
+  socket.on('REJOIN_ROOM', (msg, ack) =>
+    handle(ack, () => {
+      requireNoPlayer(socket);
+      const roomCode = String(msg?.roomCode ?? '').trim().toUpperCase();
+      const playerId = rooms.rejoin(roomCode, msg?.token);
+      bind(socket, { roomCode, playerId }, { state: rooms.get(roomCode)!, events: [] });
+      return { roomCode, playerId };
+    }),
+  );
+
+  socket.on('disconnect', () => {
+    const player = socket.data.player;
+    if (!player) return;
+    rooms.disconnect(player.roomCode, player.playerId);
+    const state = rooms.get(player.roomCode);
+    if (state) broadcast(player.roomCode, { state, events: [] });
+  });
 
   // Intents act for the Player bound to this connection; any playerId in the payload is ignored.
   for (const type of [

@@ -6,12 +6,17 @@ export type Ack<T = object> = (result: ({ ok: true } & T) | { ok: false; error: 
 
 export type JoinedRoom = { roomCode: string; playerId: string };
 
+/** What the Player's browser keeps to rejoin later; the token proves they own the Player. */
+export type RejoinKey = JoinedRoom & { token: string };
+
 /** Intents that act on one property, named by its Board index. */
 export type PropertyIntent = 'BUILD' | 'SELL_BUILDING' | 'MORTGAGE' | 'UNMORTGAGE';
 
 export type ClientToServer = {
-  CREATE_ROOM: (msg: { name: string; color: string }, ack: Ack<JoinedRoom>) => void;
-  JOIN_ROOM: (msg: { roomCode: string; name: string; color: string }, ack: Ack<JoinedRoom>) => void;
+  CREATE_ROOM: (msg: { name: string; color: string }, ack: Ack<RejoinKey>) => void;
+  JOIN_ROOM: (msg: { roomCode: string; name: string; color: string }, ack: Ack<RejoinKey>) => void;
+  /** Takes the Player back with the token from their RejoinKey; sent on every (re)connect. */
+  REJOIN_ROOM: (msg: { roomCode: string; token: string }, ack: Ack<JoinedRoom>) => void;
   // Intents carry no playerId: the server acts for the Player bound to the sending connection.
   START_GAME: (msg: object, ack: Ack) => void;
   ROLL_DICE: (msg: object, ack: Ack) => void;
@@ -43,7 +48,8 @@ export type ClientToServer = {
 
 export type ServerToClient = {
   /** `serverNow` is the server clock (ms) at send time, so clients can show countdowns despite clock skew. */
-  STATE: (msg: { state: GameState; events: GameEvent[]; serverNow: number }) => void;
+  /** `away` lists the Players with no open connection. */
+  STATE: (msg: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => void;
 };
 
 export const ROOM_CODE_LENGTH = 5;

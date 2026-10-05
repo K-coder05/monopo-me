@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from 'react';
-import { MAX_NAME_LENGTH, ROOM_CODE_LENGTH, TOKEN_COLORS, type Ack, type JoinedRoom } from '@landlord/engine';
+import { MAX_NAME_LENGTH, ROOM_CODE_LENGTH, TOKEN_COLORS, type Ack, type RejoinKey } from '@landlord/engine';
 import { socket } from './socket';
 
-export function Home({ onJoined }: { onJoined: (joined: JoinedRoom) => void }) {
+export function Home({ onJoined }: { onJoined: (session: RejoinKey) => void }) {
   const linkedCode = new URLSearchParams(location.search).get('room')?.toUpperCase() ?? '';
   const [name, setName] = useState('');
   const [color, setColor] = useState<string>(TOKEN_COLORS[0]);
@@ -10,9 +10,9 @@ export function Home({ onJoined }: { onJoined: (joined: JoinedRoom) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const reply: Ack<JoinedRoom> = (result) => {
+  const reply: Ack<RejoinKey> = (result) => {
     setBusy(false);
-    if (result.ok) onJoined({ roomCode: result.roomCode, playerId: result.playerId });
+    if (result.ok) onJoined({ roomCode: result.roomCode, playerId: result.playerId, token: result.token });
     else setError(result.error);
   };
 

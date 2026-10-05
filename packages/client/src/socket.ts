@@ -1,7 +1,35 @@
 import { io, type Socket } from 'socket.io-client';
-import type { Ack, ClientToServer, PropertyIntent, ServerToClient, TradeSide } from '@landlord/engine';
+import type { Ack, ClientToServer, PropertyIntent, ServerToClient, RejoinKey, TradeSide } from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
+
+const SESSION_KEY = 'landlord.rejoinKey';
+
+/** The RejoinKey this browser keeps so a refresh or dropped connection puts the Player straight back. */
+export function loadRejoinKey(): RejoinKey | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? (JSON.parse(raw) as RejoinKey) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRejoinKey(session: RejoinKey) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    // Storage blocked: the Player simply cannot auto-rejoin.
+  }
+}
+
+export function clearRejoinKey() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing stored to clear.
+  }
+}
 
 export type Intent =
   | 'START_GAME'

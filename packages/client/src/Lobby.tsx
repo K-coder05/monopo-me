@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { GameState } from '@landlord/engine';
 import { send } from './socket';
 
-export function Lobby({ game, me }: { game: GameState; me: string }) {
+export function Lobby({ game, me, away }: { game: GameState; me: string; away: string[] }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const link = `${location.origin}/?room=${game.roomCode}`;
@@ -38,6 +38,7 @@ export function Lobby({ game, me }: { game: GameState; me: string }) {
             <span className="token" style={{ background: p.color }} />
             {p.name}
             {p.id === game.hostId && <em> (Host)</em>}
+            {away.includes(p.id) && <em className="muted"> (away)</em>}
             {p.id === me && <em> (you)</em>}
           </li>
         ))}

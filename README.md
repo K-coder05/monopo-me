@@ -19,3 +19,7 @@ This starts the game server on port 3001 and the client on http://localhost:5173
 - `packages/engine`: pure rules engine, `(state, action, rules, rng) => { state, events }`, plus the Defaults and the shared socket protocol types
 - `packages/server`: Express + Socket.IO; binds each connection to one Player and runs the engine
 - `packages/client`: React + Vite
+
+## Persistence
+
+Rooms are saved as one JSON file each in `DATA_DIR` (default `./data/rooms`, relative to where the server starts) and reloaded on startup. Rooms idle for 30 days are deleted.

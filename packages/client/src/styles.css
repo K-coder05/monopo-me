@@ -373,6 +373,13 @@ input {
   font-weight: normal;
 }
 
+.strip .away {
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--muted);
+}
+
 .strip .jailed {
   font-size: 0.75rem;
   font-weight: 600;
