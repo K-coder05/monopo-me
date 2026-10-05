@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GameState, SpaceDefinition } from '@landlord/engine';
-import { send, type Intent } from './socket';
+import { colourGroup, HOTEL, type GameState, type SpaceDefinition } from '@landlord/engine';
+import { send, sendBuildingAction, type Intent } from './socket';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
 import { AuctionModal } from './AuctionModal';
-import { groupColor } from './spaces';
+import { describeBuildings, groupColor } from './spaces';
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
 function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
@@ -33,10 +33,17 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
     setError(await send(intent));
   }
 
+  async function actOnStreet(intent: 'BUILD' | 'SELL_BUILDING', index: number) {
+    setError(await sendBuildingAction(intent, index));
+  }
+
   const ownedBy = (playerId: string) =>
     game.board.filter((s) => game.deeds[s.index]?.ownerId === playerId);
   const myself = game.players.find((p) => p.id === me);
   const offered = myTurn && turn.step === 'awaitBuyDecision' ? game.board[myself?.position ?? 0] : undefined;
+  // The engine enforces the rest (even building, cash, bank stock) and explains any refusal.
+  const canManageBuildings = myTurn && (turn.step === 'awaitRoll' || turn.step === 'awaitEndTurn');
+  const holdsGroup = (s: SpaceDefinition) => colourGroup(game.board, s.group).every((g) => game.deeds[g.index]?.ownerId === me);
   const canPayFine =
     myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
 
@@ -87,14 +94,38 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
           ) : (
             byGroup(ownedBy(me)).map(([group, spaces]) => (
               <ul key={group} style={{ borderLeftColor: groupColor(group) }}>
-                {spaces.map((s) => (
-                  <li key={s.index}>
-                    <button type="button" className="link" onClick={() => setSelected(s.index)}>
-                      {s.name}
-                      {game.deeds[s.index]?.mortgaged && ' (mortgaged)'}
-                    </button>
-                  </li>
-                ))}
+                {spaces.map((s) => {
+                  const buildings = game.deeds[s.index]?.buildings ?? 0;
+                  return (
+                    <li key={s.index}>
+                      <button type="button" className="link" onClick={() => setSelected(s.index)}>
+                        {s.name}
+                        {game.deeds[s.index]?.mortgaged && ' (mortgaged)'}
+                      </button>
+                      {buildings > 0 && (
+                        <span className="muted"> · {describeBuildings(buildings)}</span>
+                      )}
+                      {s.type === 'street' && (holdsGroup(s) || buildings > 0) && (
+                        <span className="build">
+                          <button
+                            className="small"
+                            disabled={!canManageBuildings || buildings === HOTEL}
+                            onClick={() => actOnStreet('BUILD', s.index)}
+                          >
+                            Build ({s.houseCost})
+                          </button>
+                          <button
+                            className="small secondary"
+                            disabled={!canManageBuildings || buildings === 0}
+                            onClick={() => actOnStreet('SELL_BUILDING', s.index)}
+                          >
+                            Sell
+                          </button>
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             ))
           )}

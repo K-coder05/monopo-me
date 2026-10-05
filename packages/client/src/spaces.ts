@@ -1,3 +1,5 @@
+import { HOTEL } from '@landlord/engine';
+
 export const GROUP_COLORS: Record<string, string> = {
   brown: '#8b5a2b',
   lightBlue: '#a8d8f0',
@@ -11,4 +13,10 @@ export const GROUP_COLORS: Record<string, string> = {
 
 export function groupColor(group: string | undefined): string {
   return GROUP_COLORS[group ?? ''] ?? '#999';
+}
+
+/** "hotel", or "1 house", "3 houses", … for a Deed's building count. */
+export function describeBuildings(buildings: number): string {
+  if (buildings === HOTEL) return 'hotel';
+  return `${buildings} house${buildings === 1 ? '' : 's'}`;
 }

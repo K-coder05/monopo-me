@@ -17,6 +17,9 @@ export type ClientToServer = {
   DECLINE_PROPERTY: (msg: object, ack: Ack) => void;
   PLACE_BID: (msg: { amount: number }, ack: Ack) => void;
   PASS_AUCTION: (msg: object, ack: Ack) => void;
+  /** `index` is the street's Board index. */
+  BUILD: (msg: { index: number }, ack: Ack) => void;
+  SELL_BUILDING: (msg: { index: number }, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
 };
 

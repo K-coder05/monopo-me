@@ -179,6 +179,32 @@ input {
   height: 22%;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 0.3em;
+}
+
+.space .houses {
+  display: flex;
+  gap: 0.2em;
+}
+
+.space .house,
+.space .hotel {
+  display: block;
+  height: 1em;
+  border: 1px solid var(--line);
+  border-radius: 1px;
+}
+
+.space .house {
+  width: 1em;
+  background: #2e9e44;
+}
+
+.space .hotel {
+  width: 2.4em;
+  background: #d0312d;
 }
 
 .space:hover {
@@ -375,6 +401,17 @@ button.link {
   margin: 0 0 0.4rem;
   padding: 0 0 0 0.5rem;
   border-left: 0.4rem solid #999;
+}
+
+.mine .build {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-left: 0.4rem;
+}
+
+button.small {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.8rem;
 }
 
 /* Modals */

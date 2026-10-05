@@ -106,6 +106,17 @@ io.on('connection', (socket: GameSocket) => {
       return {};
     }),
   );
+
+  // The engine validates the index (a street the Player owns, built or sold evenly).
+  for (const type of ['BUILD', 'SELL_BUILDING'] as const) {
+    socket.on(type, (msg, ack) =>
+      handle(ack, () => {
+        const { roomCode, playerId } = requirePlayer(socket);
+        broadcast(roomCode, rooms.act(roomCode, { type, playerId, index: Number(msg?.index) }));
+        return {};
+      }),
+    );
+  }
 });
 
 httpServer.listen(PORT, () => {

@@ -4,6 +4,7 @@ import {
   createGame,
   defaultBoard,
   defaultRules,
+  HOTEL,
   IllegalActionError,
   type Action,
   type Deed,
@@ -1268,5 +1269,333 @@ describe('Jail', () => {
 
     expect(player(next, 'ann').inJail).toBe(true);
     expect(player(next, 'ann').cash).toBe(1400);
+  });
+});
+
+describe('building', () => {
+  /** ann (to move) owns the brown group (1, 3; house cost 50). */
+  function browns(rules: Rules = defaultRules, patch: Partial<Deed> = {}): GameState {
+    return owning(started(rules), 'ann', [1, 3], patch);
+  }
+
+  function build(state: GameState, index: number, rules: Rules = defaultRules, playerId = 'ann') {
+    return act(state, { type: 'BUILD', playerId, index }, noDice, rules);
+  }
+
+  it('builds a house on a street in a full Colour group for its house cost', () => {
+    const { state, events } = build(browns(), 1);
+
+    expect(state.deeds[1]?.buildings).toBe(1);
+    expect(player(state, 'ann').cash).toBe(1450);
+    expect(state.turn?.step).toBe('awaitRoll');
+    expect(events).toEqual([{ type: 'BUILDING_BUILT', playerId: 'ann', index: 1, buildings: 1, cost: 50 }]);
+  });
+
+  it('reads the house cost from the Board', () => {
+    const game = browns();
+    const board = game.board.map((s) => (s.index === 1 ? { ...s, houseCost: 70 } : s));
+
+    const { state } = build({ ...game, board }, 1);
+
+    expect(player(state, 'ann').cash).toBe(1430);
+  });
+
+  it('is refused without the whole Colour group', () => {
+    expect(() => build(owning(started(), 'ann', [1]), 1)).toThrow(IllegalActionError);
+    expect(() => build(owning(owning(started(), 'ann', [1]), 'bob', [3]), 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused while any street in the group is mortgaged', () => {
+    const game = owning(browns(), 'ann', [3], { mortgaged: true });
+
+    expect(() => build(game, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused on a station or utility', () => {
+    const game = owning(started(), 'ann', [5, 15, 25, 35, 12, 28]);
+
+    expect(() => build(game, 5)).toThrow(IllegalActionError);
+    expect(() => build(game, 12)).toThrow(IllegalActionError);
+  });
+
+  it("is refused on another Player's street", () => {
+    expect(() => build(owning(started(), 'bob', [1, 3]), 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused where there is no Deed or off the Board', () => {
+    expect(() => build(browns(), 6)).toThrow(IllegalActionError);
+    expect(() => build(browns(), 40)).toThrow(IllegalActionError);
+  });
+
+  it('is refused when the Player cannot afford the house cost', () => {
+    const game = withPlayer(browns(), 'ann', { cash: 49 });
+
+    expect(() => build(game, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is allowed after the landing is resolved', () => {
+    // 0 + 7 lands on Chance
+    const rolled = act(browns(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4)).state;
+
+    const { state } = build(rolled, 1);
+
+    expect(state.deeds[1]?.buildings).toBe(1);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+  });
+
+  it('is allowed in Jail', () => {
+    const game = withPlayer(browns(), 'ann', { inJail: true, position: 10 });
+
+    expect(build(game, 1).state.deeds[1]?.buildings).toBe(1);
+  });
+
+  it('is refused while a buy decision or Auction is open', () => {
+    // 0 + 6 lands on unowned Light Blue 1
+    const offered = act(browns(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 4)).state;
+    const auction = act(offered, { type: 'DECLINE_PROPERTY', playerId: 'ann' }).state;
+
+    expect(() => build(offered, 1)).toThrow(IllegalActionError);
+    expect(() => build(auction, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused out of turn', () => {
+    const game = owning(started(), 'bob', [1, 3]);
+
+    expect(() => build(game, 1, defaultRules, 'bob')).toThrow(IllegalActionError);
+  });
+
+  /** Builds on each index in order, as ann. */
+  function buildAll(state: GameState, indexes: number[], rules: Rules = defaultRules): GameState {
+    return indexes.reduce((s, index) => build(s, index, rules).state, state);
+  }
+
+  it('builds a hotel after housesPerHotel houses, for the house cost', () => {
+    const game = buildAll(browns(), [1, 3, 1, 3, 1, 3, 1, 3]);
+
+    const { state, events } = build(game, 1);
+
+    expect(state.deeds[1]?.buildings).toBe(HOTEL);
+    expect(events).toEqual([{ type: 'BUILDING_BUILT', playerId: 'ann', index: 1, buildings: HOTEL, cost: 50 }]);
+  });
+
+  it('reads housesPerHotel from the Rules', () => {
+    const rules = { ...defaultRules, housesPerHotel: 1 };
+
+    const { state } = build(buildAll(browns(rules), [1, 3], rules), 1, rules);
+
+    expect(state.deeds[1]?.buildings).toBe(HOTEL);
+  });
+
+  it('is refused on a street that already has a hotel', () => {
+    const game = browns(defaultRules, { buildings: HOTEL });
+
+    expect(() => build(game, 1)).toThrow(IllegalActionError);
+  });
+
+  describe('after housesPerHotel is lowered', () => {
+    const rules = { ...defaultRules, housesPerHotel: 2 };
+
+    it('keeps existing houses and makes the next build a hotel', () => {
+      const game = browns(rules, { buildings: 4 });
+
+      const { state } = build(game, 1, rules);
+
+      expect(state.deeds[1]?.buildings).toBe(HOTEL);
+      expect(state.deeds[3]?.buildings).toBe(4);
+    });
+
+    it('keeps charging the rent for the houses still standing', () => {
+      // bob owns the browns with 4 houses each; ann lands on Brown 2
+      const game = owning(started(rules), 'bob', [1, 3], { buildings: 4 });
+
+      const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+      expect(player(state, 'ann').cash).toBe(1500 - 320);
+    });
+  });
+
+  describe('evenly', () => {
+    it('refuses a house that would put a street two levels above another in its group', () => {
+      const game = build(browns(), 1).state;
+
+      expect(() => build(game, 1)).toThrow(IllegalActionError);
+    });
+
+    it('allows building up the lower street', () => {
+      const game = build(browns(), 1).state;
+
+      expect(build(game, 3).state.deeds[3]?.buildings).toBe(1);
+    });
+
+    it('refuses a hotel until every street in the group has housesPerHotel houses', () => {
+      const game = buildAll(browns(), [1, 3, 1, 3, 1, 3, 1]);
+
+      expect(() => build(game, 1)).toThrow(IllegalActionError);
+    });
+
+    it('counts houses above a lowered housesPerHotel as the house limit', () => {
+      const rules = { ...defaultRules, housesPerHotel: 2 };
+      const game = owning(browns(rules, { buildings: 2 }), 'ann', [1], { buildings: 4 });
+
+      expect(build(game, 3, rules).state.deeds[3]?.buildings).toBe(HOTEL);
+      expect(build(game, 1, rules).state.deeds[1]?.buildings).toBe(HOTEL);
+    });
+
+    it('is not enforced when evenBuildRule is off', () => {
+      const rules = { ...defaultRules, evenBuildRule: false };
+
+      const { state } = build(buildAll(browns(rules), [1, 1, 1, 1], rules), 1, rules);
+
+      expect(state.deeds[1]?.buildings).toBe(HOTEL);
+      expect(state.deeds[3]?.buildings).toBe(0);
+    });
+  });
+
+  describe('with limited bank buildings', () => {
+    it("stops building houses when the bank has none left, counting every Player's houses", () => {
+      const rules = { ...defaultRules, bankHouses: 3 };
+      const game = owning(browns(rules), 'bob', [39], { buildings: 1 });
+
+      const built = buildAll(game, [1, 3], rules);
+
+      expect(() => build(built, 1, rules)).toThrow(IllegalActionError);
+    });
+
+    it('stops building hotels when the bank has none left', () => {
+      const rules = { ...defaultRules, bankHotels: 1 };
+      const game = owning(browns(rules, { buildings: 4 }), 'ann', [1], { buildings: HOTEL });
+
+      expect(() => build(game, 3, rules)).toThrow(IllegalActionError);
+    });
+
+    it('gets back the houses a hotel replaces', () => {
+      const rules = { ...defaultRules, bankHouses: 8 };
+      const game = owning(browns(rules, { buildings: 4 }), 'ann', [6, 8, 9]);
+      expect(() => build(game, 6, rules)).toThrow(IllegalActionError);
+
+      const hotel = build(game, 1, rules).state;
+
+      expect(build(hotel, 6, rules).state.deeds[6]?.buildings).toBe(1);
+    });
+  });
+});
+
+describe('rent with buildings', () => {
+  /** ann rolls onto Brown 2 (3; rents 4/20/60/180/320/450) where bob owns the browns with `buildings` on it. */
+  function landOnBrown2(buildings: number, rules: Rules = defaultRules) {
+    const game = owning(owning(started(rules), 'bob', [1]), 'bob', [3], { buildings });
+    return act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules).state;
+  }
+
+  it.each([
+    [1, 20],
+    [2, 60],
+    [3, 180],
+    [4, 320],
+  ])('charges the rent-table value for %i houses', (houses, rent) => {
+    expect(player(landOnBrown2(houses), 'ann').cash).toBe(1500 - rent);
+  });
+
+  it('charges the last rent-table value for a hotel, whatever housesPerHotel is', () => {
+    const rules = { ...defaultRules, housesPerHotel: 2 };
+
+    expect(player(landOnBrown2(HOTEL, rules), 'ann').cash).toBe(1500 - 450);
+  });
+});
+
+describe('selling buildings', () => {
+  /** ann (to move) owns the brown group (1, 3; house cost 50) with `buildings` on each street. */
+  function browns(buildings: number, rules: Rules = defaultRules): GameState {
+    return owning(started(rules), 'ann', [1, 3], { buildings });
+  }
+
+  function sell(state: GameState, index: number, rules: Rules = defaultRules, playerId = 'ann') {
+    return act(state, { type: 'SELL_BUILDING', playerId, index }, noDice, rules);
+  }
+
+  it('sells a house back to the bank at buildingSellbackRate of the house cost', () => {
+    const { state, events } = sell(browns(2), 1);
+
+    expect(state.deeds[1]?.buildings).toBe(1);
+    expect(player(state, 'ann').cash).toBe(1525);
+    expect(events).toEqual([{ type: 'BUILDING_SOLD', playerId: 'ann', index: 1, buildings: 1, amount: 25 }]);
+  });
+
+  it('reads the sell-back rate from the Rules, rounding down', () => {
+    const rules = { ...defaultRules, buildingSellbackRate: 0.33 };
+
+    const { state } = sell(browns(1, rules), 1, rules);
+
+    expect(player(state, 'ann').cash).toBe(1516);
+  });
+
+  it('takes a hotel back down to housesPerHotel houses', () => {
+    const { state, events } = sell(browns(HOTEL), 1);
+
+    expect(state.deeds[1]?.buildings).toBe(4);
+    expect(events).toEqual([{ type: 'BUILDING_SOLD', playerId: 'ann', index: 1, buildings: 4, amount: 25 }]);
+  });
+
+  it('takes a hotel down to a lowered housesPerHotel', () => {
+    const rules = { ...defaultRules, housesPerHotel: 2 };
+
+    const { state } = sell(browns(HOTEL, rules), 1, rules);
+
+    expect(state.deeds[1]?.buildings).toBe(2);
+  });
+
+  it('is refused on a street with no buildings', () => {
+    expect(() => sell(browns(0), 1)).toThrow(IllegalActionError);
+  });
+
+  it("is refused on another Player's street", () => {
+    expect(() => sell(owning(started(), 'bob', [1, 3], { buildings: 1 }), 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused where there is no Deed or off the Board', () => {
+    expect(() => sell(browns(1), 6)).toThrow(IllegalActionError);
+    expect(() => sell(browns(1), 40)).toThrow(IllegalActionError);
+  });
+
+  it('is allowed after the landing is resolved', () => {
+    // 0 + 7 lands on Chance
+    const rolled = act(browns(1), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4)).state;
+
+    expect(sell(rolled, 1).state.deeds[1]?.buildings).toBe(0);
+  });
+
+  it('is refused while a buy decision is open', () => {
+    // 0 + 6 lands on unowned Light Blue 1
+    const offered = act(browns(1), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 4)).state;
+
+    expect(() => sell(offered, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused out of turn', () => {
+    const game = owning(started(), 'bob', [1, 3], { buildings: 1 });
+
+    expect(() => sell(game, 1, defaultRules, 'bob')).toThrow(IllegalActionError);
+  });
+
+  describe('evenly', () => {
+    it('refuses selling from a street below another in its group', () => {
+      const game = owning(browns(2), 'ann', [3], { buildings: 1 });
+
+      expect(() => sell(game, 3)).toThrow(IllegalActionError);
+      expect(sell(game, 1).state.deeds[1]?.buildings).toBe(1);
+    });
+
+    it('refuses selling houses while another street in the group has a hotel', () => {
+      const game = owning(browns(4), 'ann', [1], { buildings: HOTEL });
+
+      expect(() => sell(game, 3)).toThrow(IllegalActionError);
+    });
+
+    it('is not enforced when evenBuildRule is off', () => {
+      const rules = { ...defaultRules, evenBuildRule: false };
+      const game = owning(browns(4, rules), 'ann', [1], { buildings: HOTEL });
+
+      expect(sell(game, 3, rules).state.deeds[3]?.buildings).toBe(3);
+    });
   });
 });

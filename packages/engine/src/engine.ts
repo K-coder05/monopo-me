@@ -18,6 +18,12 @@ export class IllegalActionError extends Error {
   override name = 'IllegalActionError';
 }
 
+/**
+ * A Deed's `buildings` value for a hotel; 0–4 are houses. It matches the hotel's (last) entry in a
+ * street's rent table, so house levels above housesPerHotel are skipped.
+ */
+export const HOTEL = 5;
+
 export type NewPlayer = { id: string; name: string; color: string };
 
 export function createGame(
@@ -71,6 +77,12 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'EXPIRE_AUCTION':
       next = expireAuction(state, rules, now, events);
+      break;
+    case 'BUILD':
+      next = build(state, action.playerId, action.index, rules, events);
+      break;
+    case 'SELL_BUILDING':
+      next = sellBuilding(state, action.playerId, action.index, rules, events);
       break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
@@ -328,7 +340,7 @@ function freeParking(state: GameState, playerId: string, rules: Rules, events: G
   }
 }
 
-/** Rent `ownerId` charges on an unimproved property, from the current Rules and Board. */
+/** Rent `ownerId` charges on a property, from the current Rules and Board. */
 function rentFor(state: GameState, space: SpaceDefinition, ownerId: string, rules: Rules): number {
   const ownedUnmortgaged = (type: SpaceDefinition['type']) =>
     state.board.filter((s) => {
@@ -340,9 +352,10 @@ function rentFor(state: GameState, space: SpaceDefinition, ownerId: string, rule
 
   switch (space.type) {
     case 'street': {
+      const buildings = state.deeds[space.index]?.buildings ?? 0;
+      if (buildings > 0) return space.rents?.[buildings] ?? 0;
       const base = space.rents?.[0] ?? 0;
-      const group = state.board.filter((s) => s.type === 'street' && s.group === space.group);
-      const holdsGroup = space.group !== undefined && group.every((s) => state.deeds[s.index]?.ownerId === ownerId);
+      const holdsGroup = space.group !== undefined && colourGroup(state.board, space.group).every((s) => state.deeds[s.index]?.ownerId === ownerId);
       // A payer's share rounds up.
       return holdsGroup ? Math.ceil(base * rules.colourGroupRentMultiplier) : base;
     }
@@ -458,6 +471,110 @@ function settleAuction(state: GameState, { index, highBid }: Auction, rules: Rul
   const paid = adjustCash(closed, playerId, -amount);
   const deeds = { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } };
   return landingResolved({ ...paid, deeds }, rules, events);
+}
+
+/** Checks that `playerId` is the active Player, before rolling or with their landing resolved. */
+function requireBuildMoment(state: GameState, playerId: string): void {
+  const turn = state.turn;
+  if (state.phase !== 'playing' || !turn) throw new IllegalActionError('The game has not started');
+  if (turn.playerId !== playerId) throw new IllegalActionError('It is not your turn');
+  if (turn.step !== 'awaitRoll' && turn.step !== 'awaitEndTurn') {
+    throw new IllegalActionError(`You cannot do that now (${turn.step})`);
+  }
+}
+
+/**
+ * Checks that `index` is a street `playerId` owns along with its whole, unmortgaged Colour group;
+ * returns the street and the group's streets (including it).
+ */
+function requireBuildableGroup(state: GameState, playerId: string, index: number) {
+  const space = state.board[index];
+  const deed = state.deeds[index];
+  if (!space || space.type !== 'street' || space.group === undefined) {
+    throw new IllegalActionError('Only streets in a Colour group can have buildings');
+  }
+  if (deed?.ownerId !== playerId) throw new IllegalActionError('You do not own that street');
+  const group = colourGroup(state.board, space.group);
+  if (!group.every((s) => state.deeds[s.index]?.ownerId === playerId)) {
+    throw new IllegalActionError('You need the whole Colour group to build');
+  }
+  if (group.some((s) => state.deeds[s.index]!.mortgaged)) {
+    throw new IllegalActionError('No street in the Colour group may be mortgaged');
+  }
+  return { space, deed, group };
+}
+
+/**
+ * A street's step on the way to a hotel, for evenBuildRule: its house count, then one more for the
+ * hotel. Houses above a since-lowered housesPerHotel count as the limit, since the next build there
+ * is the hotel.
+ */
+function buildLevel(buildings: number, rules: Rules): number {
+  return buildings === HOTEL ? rules.housesPerHotel + 1 : Math.min(buildings, rules.housesPerHotel);
+}
+
+/**
+ * Houses and hotels standing on the Board. The bank's stock for bankHouses / bankHotels is the
+ * limit minus these, so a hotel hands its houses back to the bank.
+ */
+function buildingsInPlay(state: GameState): { houses: number; hotels: number } {
+  const counts = Object.values(state.deeds).map((d) => d.buildings);
+  return {
+    houses: sum(counts.filter((b) => b !== HOTEL)),
+    hotels: counts.filter((b) => b === HOTEL).length,
+  };
+}
+
+function build(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
+  requireBuildMoment(state, playerId);
+  const { space, deed, group } = requireBuildableGroup(state, playerId, index);
+  if (deed.buildings === HOTEL) throw new IllegalActionError('This street already has a hotel');
+  if (rules.evenBuildRule) {
+    const lowest = Math.min(...group.map((s) => buildLevel(state.deeds[s.index]!.buildings, rules)));
+    if (buildLevel(deed.buildings, rules) > lowest) {
+      throw new IllegalActionError('Build evenly: build on the other streets in this Colour group first');
+    }
+  }
+  const buildings = deed.buildings >= rules.housesPerHotel ? HOTEL : deed.buildings + 1;
+  const { houses, hotels } = buildingsInPlay(state);
+  if (buildings === HOTEL && rules.bankHotels !== null && hotels >= rules.bankHotels) {
+    throw new IllegalActionError('The bank has no hotels left');
+  }
+  if (buildings !== HOTEL && rules.bankHouses !== null && houses >= rules.bankHouses) {
+    throw new IllegalActionError('The bank has no houses left');
+  }
+  const cost = space.houseCost ?? 0;
+  const cash = findPlayer(state, playerId).cash;
+  if (cash < cost) throw new IllegalActionError(`You need ${cost} to build here, but have ${cash}`);
+  events.push({ type: 'BUILDING_BUILT', playerId, index, buildings, cost });
+  const deeds = { ...state.deeds, [index]: { ...deed, buildings } };
+  return { ...adjustCash(state, playerId, -cost), deeds };
+}
+
+function sellBuilding(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
+  requireBuildMoment(state, playerId);
+  const space = state.board[index];
+  const deed = state.deeds[index];
+  if (!space || deed?.ownerId !== playerId) throw new IllegalActionError('You do not own that street');
+  if (deed.buildings === 0) throw new IllegalActionError('There are no buildings on that street');
+  if (rules.evenBuildRule) {
+    const group = colourGroup(state.board, space.group);
+    const highest = Math.max(...group.map((s) => buildLevel(state.deeds[s.index]?.buildings ?? 0, rules)));
+    if (buildLevel(deed.buildings, rules) < highest) {
+      throw new IllegalActionError('Sell evenly: sell from the other streets in this Colour group first');
+    }
+  }
+  const buildings = deed.buildings === HOTEL ? rules.housesPerHotel : deed.buildings - 1;
+  // A Player's receipt rounds down.
+  const amount = Math.floor((space.houseCost ?? 0) * rules.buildingSellbackRate);
+  events.push({ type: 'BUILDING_SOLD', playerId, index, buildings, amount });
+  const deeds = { ...state.deeds, [index]: { ...deed, buildings } };
+  return { ...adjustCash(state, playerId, amount), deeds };
+}
+
+/** The streets of a Colour group, in Board order. */
+export function colourGroup(board: SpaceDefinition[], group: string | undefined): SpaceDefinition[] {
+  return board.filter((s) => s.type === 'street' && s.group === group);
 }
 
 /** Streets, stations and utilities: the spaces that can have a Deed. */

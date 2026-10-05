@@ -73,7 +73,12 @@ export type Player = {
 };
 
 /** Live ownership state of one property, kept separate from its Space definition. */
-export type Deed = { ownerId: string; buildings: number; mortgaged: boolean };
+export type Deed = {
+  ownerId: string;
+  /** 0–4 houses, or HOTEL (5). A street may hold more houses than a since-lowered housesPerHotel. */
+  buildings: number;
+  mortgaged: boolean;
+};
 
 export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'auction' | 'awaitEndTurn';
 
@@ -134,6 +139,9 @@ export type GameEvent =
   | { type: 'AUCTION_PASSED'; playerId: string }
   | { type: 'AUCTION_WON'; playerId: string; index: number; amount: number }
   | { type: 'AUCTION_UNSOLD'; index: number }
+  /** `buildings` is the street's new building count (HOTEL for a hotel). */
+  | { type: 'BUILDING_BUILT'; playerId: string; index: number; buildings: number; cost: number }
+  | { type: 'BUILDING_SOLD'; playerId: string; index: number; buildings: number; amount: number }
   | { type: 'TURN_ENDED'; playerId: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
@@ -167,6 +175,8 @@ export type Action =
   | { type: 'PASS_AUCTION'; playerId: string }
   /** Sent by the server's countdown, not by a Player. */
   | { type: 'EXPIRE_AUCTION' }
+  | { type: 'BUILD'; playerId: string; index: number }
+  | { type: 'SELL_BUILDING'; playerId: string; index: number }
   | { type: 'END_TURN'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */

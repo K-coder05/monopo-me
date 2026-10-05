@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { isProperty, type GameState, type SpaceDefinition } from '@landlord/engine';
-import { groupColor } from './spaces';
+import { describeBuildings, groupColor } from './spaces';
 
 /** Title-deed card for any space: rent table, owner and mortgage status. */
 export function TitleDeed({ game, index, onClose }: { game: GameState; index: number; onClose: () => void }) {
@@ -46,6 +46,12 @@ export function TitleDeed({ game, index, onClose }: { game: GameState; index: nu
                   'Bank'
                 )}
               </dd>
+              {deed && space.type === 'street' && (
+                <>
+                  <dt>Buildings</dt>
+                  <dd>{deed.buildings === 0 ? 'none' : describeBuildings(deed.buildings)}</dd>
+                </>
+              )}
               {deed && (
                 <>
                   <dt>Mortgaged</dt>

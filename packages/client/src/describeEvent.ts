@@ -1,4 +1,4 @@
-import type { GameEvent, GameState } from '@landlord/engine';
+import { HOTEL, type GameEvent, type GameState } from '@landlord/engine';
 
 /** One line of game log text for an event. */
 export function describeEvent(event: GameEvent, game: GameState): string {
@@ -66,6 +66,10 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} won ${space(event.index)} at auction for ${event.amount}`;
     case 'AUCTION_UNSOLD':
       return `Nobody bid; ${space(event.index)} stays with the bank`;
+    case 'BUILDING_BUILT':
+      return `${name(event.playerId)} built ${event.buildings === HOTEL ? 'a hotel' : 'a house'} on ${space(event.index)} for ${event.cost}`;
+    case 'BUILDING_SOLD':
+      return `${name(event.playerId)} sold a building on ${space(event.index)} for ${event.amount}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
   }

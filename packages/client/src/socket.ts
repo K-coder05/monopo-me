@@ -22,6 +22,11 @@ export function send(intent: Intent): Promise<string | null> {
   return new Promise((resolve) => socket.emit(intent, {}, toError(resolve)));
 }
 
+/** Builds on, or sells a building from, the street at `index`; resolves like `send`. */
+export function sendBuildingAction(intent: 'BUILD' | 'SELL_BUILDING', index: number): Promise<string | null> {
+  return new Promise((resolve) => socket.emit(intent, { index }, toError(resolve)));
+}
+
 /** Bids `amount` in the open Auction; resolves like `send`. */
 export function placeBid(amount: number): Promise<string | null> {
   return new Promise((resolve) => socket.emit('PLACE_BID', { amount }, toError(resolve)));

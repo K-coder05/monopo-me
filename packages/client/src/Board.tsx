@@ -1,5 +1,5 @@
-import type { GameState, SpaceDefinition } from '@landlord/engine';
-import { groupColor } from './spaces';
+import { HOTEL, type GameState, type SpaceDefinition } from '@landlord/engine';
+import { describeBuildings, groupColor } from './spaces';
 
 const SIDE = 11;
 
@@ -24,6 +24,18 @@ function gridPosition(index: number): { row: number; col: number } {
   return { row: 1 + (index - 3 * n), col: SIDE };
 }
 
+function Buildings({ count }: { count: number }) {
+  if (count === 0) return null;
+  if (count === HOTEL) return <span className="hotel" aria-label="Hotel" />;
+  return (
+    <span className="houses" aria-label={describeBuildings(count)}>
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className="house" />
+      ))}
+    </span>
+  );
+}
+
 export function Board({ game, onSelect }: { game: GameState; onSelect: (index: number) => void }) {
   return (
     <div className="board">
@@ -42,7 +54,11 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
             title={owner ? `${space.name} (owned by ${owner.name})` : space.name}
             onClick={() => onSelect(space.index)}
           >
-            {space.type === 'street' && <div className="bar" style={{ background: groupColor(space.group) }} />}
+            {space.type === 'street' && (
+              <div className="bar" style={{ background: groupColor(space.group) }}>
+                <Buildings count={deed?.buildings ?? 0} />
+              </div>
+            )}
             {owner && <div className="owner" style={{ background: owner.color }} aria-label={`Owned by ${owner.name}`} />}
             {ICONS[space.type] && <div className="icon">{ICONS[space.type]}</div>}
             <div className="name">{space.name}</div>
