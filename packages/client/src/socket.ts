@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import type { Ack, ClientToServer, ServerToClient } from '@landlord/engine';
+import type { Ack, ClientToServer, PropertyIntent, ServerToClient } from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
 
@@ -22,8 +22,11 @@ export function send(intent: Intent): Promise<string | null> {
   return new Promise((resolve) => socket.emit(intent, {}, toError(resolve)));
 }
 
-/** Builds on, or sells a building from, the street at `index`; resolves like `send`. */
-export function sendBuildingAction(intent: 'BUILD' | 'SELL_BUILDING', index: number): Promise<string | null> {
+/**
+ * Builds on, or sells a building from, the street at `index`, or mortgages or unmortgages the
+ * property there; resolves like `send`.
+ */
+export function sendPropertyAction(intent: PropertyIntent, index: number): Promise<string | null> {
   return new Promise((resolve) => socket.emit(intent, { index }, toError(resolve)));
 }
 

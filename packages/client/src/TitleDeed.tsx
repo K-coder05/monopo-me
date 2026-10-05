@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { isProperty, type GameState, type SpaceDefinition } from '@landlord/engine';
+import { isProperty, mortgageValue, unmortgageCost, type GameState, type SpaceDefinition } from '@landlord/engine';
 import { describeBuildings, groupColor } from './spaces';
 
 /** Title-deed card for any space: rent table, owner and mortgage status. */
@@ -34,8 +34,9 @@ export function TitleDeed({ game, index, onClose }: { game: GameState; index: nu
                 </>
               )}
               <dt>Mortgage value</dt>
-              {/* Receipts round down. */}
-              <dd>{Math.floor((space.price ?? 0) * game.rules.mortgageRate)}</dd>
+              <dd>{mortgageValue(space, game.rules)}</dd>
+              <dt>Unmortgage cost</dt>
+              <dd>{unmortgageCost(space, game.rules)}</dd>
               <dt>Owner</dt>
               <dd>
                 {owner ? (

@@ -221,6 +221,17 @@ input {
   border: 1px solid var(--line);
 }
 
+.space.mortgaged:not(:hover) {
+  background: repeating-linear-gradient(135deg, transparent 0 0.5em, rgba(0, 0, 0, 0.06) 0.5em 1em), var(--space);
+}
+
+.space .mortgage-tag {
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--error);
+}
+
 .space .icon {
   font-size: 1.6em;
   line-height: 1.3;

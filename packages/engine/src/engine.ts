@@ -84,6 +84,12 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'SELL_BUILDING':
       next = sellBuilding(state, action.playerId, action.index, rules, events);
       break;
+    case 'MORTGAGE':
+      next = mortgage(state, action.playerId, action.index, rules, events);
+      break;
+    case 'UNMORTGAGE':
+      next = unmortgage(state, action.playerId, action.index, rules, events);
+      break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
       break;
@@ -357,12 +363,12 @@ function rentFor(state: GameState, space: SpaceDefinition, ownerId: string, rule
       const base = space.rents?.[0] ?? 0;
       const holdsGroup = space.group !== undefined && colourGroup(state.board, space.group).every((s) => state.deeds[s.index]?.ownerId === ownerId);
       // A payer's share rounds up.
-      return holdsGroup ? Math.ceil(base * rules.colourGroupRentMultiplier) : base;
+      return holdsGroup ? roundUp(base * rules.colourGroupRentMultiplier) : base;
     }
     case 'station':
       return byCount(rules.stationRents, ownedUnmortgaged('station'));
     case 'utility':
-      return Math.ceil(byCount(rules.utilityMultipliers, ownedUnmortgaged('utility')) * sum(state.turn!.lastRoll));
+      return roundUp(byCount(rules.utilityMultipliers, ownedUnmortgaged('utility')) * sum(state.turn!.lastRoll));
     default:
       return 0;
   }
@@ -473,8 +479,11 @@ function settleAuction(state: GameState, { index, highBid }: Auction, rules: Rul
   return landingResolved({ ...paid, deeds }, rules, events);
 }
 
-/** Checks that `playerId` is the active Player, before rolling or with their landing resolved. */
-function requireBuildMoment(state: GameState, playerId: string): void {
+/**
+ * Checks that `playerId` is the active Player, before rolling or with their landing resolved: when
+ * they may build, sell buildings, mortgage and unmortgage.
+ */
+function requirePropertyMoment(state: GameState, playerId: string): void {
   const turn = state.turn;
   if (state.phase !== 'playing' || !turn) throw new IllegalActionError('The game has not started');
   if (turn.playerId !== playerId) throw new IllegalActionError('It is not your turn');
@@ -526,7 +535,7 @@ function buildingsInPlay(state: GameState): { houses: number; hotels: number } {
 }
 
 function build(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
-  requireBuildMoment(state, playerId);
+  requirePropertyMoment(state, playerId);
   const { space, deed, group } = requireBuildableGroup(state, playerId, index);
   if (deed.buildings === HOTEL) throw new IllegalActionError('This street already has a hotel');
   if (rules.evenBuildRule) {
@@ -552,10 +561,8 @@ function build(state: GameState, playerId: string, index: number, rules: Rules, 
 }
 
 function sellBuilding(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
-  requireBuildMoment(state, playerId);
-  const space = state.board[index];
-  const deed = state.deeds[index];
-  if (!space || deed?.ownerId !== playerId) throw new IllegalActionError('You do not own that street');
+  requirePropertyMoment(state, playerId);
+  const { space, deed } = requireOwnedProperty(state, playerId, index);
   if (deed.buildings === 0) throw new IllegalActionError('There are no buildings on that street');
   if (rules.evenBuildRule) {
     const group = colourGroup(state.board, space.group);
@@ -566,10 +573,64 @@ function sellBuilding(state: GameState, playerId: string, index: number, rules: 
   }
   const buildings = deed.buildings === HOTEL ? rules.housesPerHotel : deed.buildings - 1;
   // A Player's receipt rounds down.
-  const amount = Math.floor((space.houseCost ?? 0) * rules.buildingSellbackRate);
+  const amount = roundDown((space.houseCost ?? 0) * rules.buildingSellbackRate);
   events.push({ type: 'BUILDING_SOLD', playerId, index, buildings, amount });
   const deeds = { ...state.deeds, [index]: { ...deed, buildings } };
   return { ...adjustCash(state, playerId, amount), deeds };
+}
+
+/**
+ * What the bank pays for mortgaging a property: mortgageRate of its current List price, rounded
+ * down as a Player's receipt.
+ */
+export function mortgageValue(space: SpaceDefinition, rules: Rules): number {
+  return roundDown((space.price ?? 0) * rules.mortgageRate);
+}
+
+/** What lifting a mortgage costs: the mortgage value plus unmortgageInterest on it, rounded up. */
+export function unmortgageCost(space: SpaceDefinition, rules: Rules): number {
+  const value = mortgageValue(space, rules);
+  return value + roundUp(value * rules.unmortgageInterest);
+}
+
+/** Whether any street in `space`'s Colour group has buildings; always false for stations and utilities. */
+export function groupHasBuildings(state: GameState, space: SpaceDefinition): boolean {
+  return space.type === 'street' && colourGroup(state.board, space.group).some((s) => (state.deeds[s.index]?.buildings ?? 0) > 0);
+}
+
+/** Checks that `index` is a property `playerId` owns; returns it and its Deed. */
+function requireOwnedProperty(state: GameState, playerId: string, index: number) {
+  const space = state.board[index];
+  const deed = state.deeds[index];
+  if (!space || !isProperty(space) || deed?.ownerId !== playerId) {
+    throw new IllegalActionError('You do not own that property');
+  }
+  return { space, deed };
+}
+
+function mortgage(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
+  requirePropertyMoment(state, playerId);
+  const { space, deed } = requireOwnedProperty(state, playerId, index);
+  if (deed.mortgaged) throw new IllegalActionError('That property is already mortgaged');
+  if (groupHasBuildings(state, space)) {
+    throw new IllegalActionError('Sell the buildings in this Colour group first');
+  }
+  const amount = mortgageValue(space, rules);
+  events.push({ type: 'PROPERTY_MORTGAGED', playerId, index, amount });
+  const deeds = { ...state.deeds, [index]: { ...deed, mortgaged: true } };
+  return { ...adjustCash(state, playerId, amount), deeds };
+}
+
+function unmortgage(state: GameState, playerId: string, index: number, rules: Rules, events: GameEvent[]): GameState {
+  requirePropertyMoment(state, playerId);
+  const { space, deed } = requireOwnedProperty(state, playerId, index);
+  if (!deed.mortgaged) throw new IllegalActionError('That property is not mortgaged');
+  const cost = unmortgageCost(space, rules);
+  const cash = findPlayer(state, playerId).cash;
+  if (cash < cost) throw new IllegalActionError(`You need ${cost} to unmortgage this, but have ${cash}`);
+  events.push({ type: 'PROPERTY_UNMORTGAGED', playerId, index, cost });
+  const deeds = { ...state.deeds, [index]: { ...deed, mortgaged: false } };
+  return { ...adjustCash(state, playerId, -cost), deeds };
 }
 
 /** The streets of a Colour group, in Board order. */
@@ -635,6 +696,19 @@ function rollDice(rules: Rules, rng: Rng): number[] {
 function rollFor(playerId: string, rules: Rules, rng: Rng): RollOffRoll {
   const dice = rollDice(rules, rng);
   return { playerId, dice, total: sum(dice) };
+}
+
+/**
+ * Rounds a calculated amount a Player pays up to a whole number. The tolerance stops float noise in
+ * rate products, such as 30 × 0.1 = 3.0000000000000004, from rounding a whole amount.
+ */
+function roundUp(x: number): number {
+  return Math.ceil(x - 1e-9);
+}
+
+/** Rounds a calculated amount a Player receives down to a whole number, with roundUp's tolerance. */
+function roundDown(x: number): number {
+  return Math.floor(x + 1e-9);
 }
 
 function sum(xs: number[]): number {

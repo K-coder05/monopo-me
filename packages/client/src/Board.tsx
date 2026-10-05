@@ -49,9 +49,9 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
           <button
             key={space.index}
             type="button"
-            className={`space ${corner ? 'corner' : ''}`}
+            className={`space ${corner ? 'corner' : ''} ${deed?.mortgaged ? 'mortgaged' : ''}`}
             style={{ gridRow: row, gridColumn: col }}
-            title={owner ? `${space.name} (owned by ${owner.name})` : space.name}
+            title={owner ? `${space.name} (owned by ${owner.name}${deed.mortgaged ? ', mortgaged' : ''})` : space.name}
             onClick={() => onSelect(space.index)}
           >
             {space.type === 'street' && (
@@ -60,6 +60,7 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
               </div>
             )}
             {owner && <div className="owner" style={{ background: owner.color }} aria-label={`Owned by ${owner.name}`} />}
+            {deed?.mortgaged && <div className="mortgage-tag">Mortgaged</div>}
             {ICONS[space.type] && <div className="icon">{ICONS[space.type]}</div>}
             <div className="name">{space.name}</div>
             {space.price !== undefined && <div className="price">{space.price}</div>}

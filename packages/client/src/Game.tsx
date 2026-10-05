@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { colourGroup, HOTEL, type GameState, type SpaceDefinition } from '@landlord/engine';
-import { send, sendBuildingAction, type Intent } from './socket';
+import {
+  colourGroup,
+  groupHasBuildings,
+  HOTEL,
+  mortgageValue,
+  unmortgageCost,
+  type GameState,
+  type PropertyIntent,
+  type SpaceDefinition,
+} from '@landlord/engine';
+import { send, sendPropertyAction, type Intent } from './socket';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
 import { TitleDeed } from './TitleDeed';
@@ -33,8 +42,8 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
     setError(await send(intent));
   }
 
-  async function actOnStreet(intent: 'BUILD' | 'SELL_BUILDING', index: number) {
-    setError(await sendBuildingAction(intent, index));
+  async function actOnProperty(intent: PropertyIntent, index: number) {
+    setError(await sendPropertyAction(intent, index));
   }
 
   const ownedBy = (playerId: string) =>
@@ -42,7 +51,7 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
   const myself = game.players.find((p) => p.id === me);
   const offered = myTurn && turn.step === 'awaitBuyDecision' ? game.board[myself?.position ?? 0] : undefined;
   // The engine enforces the rest (even building, cash, bank stock) and explains any refusal.
-  const canManageBuildings = myTurn && (turn.step === 'awaitRoll' || turn.step === 'awaitEndTurn');
+  const canManageProperties = myTurn && (turn.step === 'awaitRoll' || turn.step === 'awaitEndTurn');
   const holdsGroup = (s: SpaceDefinition) => colourGroup(game.board, s.group).every((g) => game.deeds[g.index]?.ownerId === me);
   const canPayFine =
     myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
@@ -96,33 +105,53 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
               <ul key={group} style={{ borderLeftColor: groupColor(group) }}>
                 {spaces.map((s) => {
                   const buildings = game.deeds[s.index]?.buildings ?? 0;
+                  const mortgaged = !!game.deeds[s.index]?.mortgaged;
                   return (
                     <li key={s.index}>
                       <button type="button" className="link" onClick={() => setSelected(s.index)}>
                         {s.name}
-                        {game.deeds[s.index]?.mortgaged && ' (mortgaged)'}
+                        {mortgaged && ' (mortgaged)'}
                       </button>
                       {buildings > 0 && (
                         <span className="muted"> · {describeBuildings(buildings)}</span>
                       )}
-                      {s.type === 'street' && (holdsGroup(s) || buildings > 0) && (
-                        <span className="build">
-                          <button
-                            className="small"
-                            disabled={!canManageBuildings || buildings === HOTEL}
-                            onClick={() => actOnStreet('BUILD', s.index)}
-                          >
-                            Build ({s.houseCost})
-                          </button>
+                      <span className="build">
+                        {s.type === 'street' && (holdsGroup(s) || buildings > 0) && (
+                          <>
+                            <button
+                              className="small"
+                              disabled={!canManageProperties || buildings === HOTEL}
+                              onClick={() => actOnProperty('BUILD', s.index)}
+                            >
+                              Build ({s.houseCost})
+                            </button>
+                            <button
+                              className="small secondary"
+                              disabled={!canManageProperties || buildings === 0}
+                              onClick={() => actOnProperty('SELL_BUILDING', s.index)}
+                            >
+                              Sell
+                            </button>
+                          </>
+                        )}
+                        {mortgaged ? (
                           <button
                             className="small secondary"
-                            disabled={!canManageBuildings || buildings === 0}
-                            onClick={() => actOnStreet('SELL_BUILDING', s.index)}
+                            disabled={!canManageProperties}
+                            onClick={() => actOnProperty('UNMORTGAGE', s.index)}
                           >
-                            Sell
+                            Unmortgage ({unmortgageCost(s, game.rules)})
                           </button>
-                        </span>
-                      )}
+                        ) : (
+                          <button
+                            className="small secondary"
+                            disabled={!canManageProperties || groupHasBuildings(game, s)}
+                            onClick={() => actOnProperty('MORTGAGE', s.index)}
+                          >
+                            Mortgage ({mortgageValue(s, game.rules)})
+                          </button>
+                        )}
+                      </span>
                     </li>
                   );
                 })}

@@ -142,6 +142,8 @@ export type GameEvent =
   /** `buildings` is the street's new building count (HOTEL for a hotel). */
   | { type: 'BUILDING_BUILT'; playerId: string; index: number; buildings: number; cost: number }
   | { type: 'BUILDING_SOLD'; playerId: string; index: number; buildings: number; amount: number }
+  | { type: 'PROPERTY_MORTGAGED'; playerId: string; index: number; amount: number }
+  | { type: 'PROPERTY_UNMORTGAGED'; playerId: string; index: number; cost: number }
   | { type: 'TURN_ENDED'; playerId: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
@@ -177,6 +179,8 @@ export type Action =
   | { type: 'EXPIRE_AUCTION' }
   | { type: 'BUILD'; playerId: string; index: number }
   | { type: 'SELL_BUILDING'; playerId: string; index: number }
+  | { type: 'MORTGAGE'; playerId: string; index: number }
+  | { type: 'UNMORTGAGE'; playerId: string; index: number }
   | { type: 'END_TURN'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */

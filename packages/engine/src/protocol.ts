@@ -6,6 +6,9 @@ export type Ack<T = object> = (result: ({ ok: true } & T) | { ok: false; error: 
 
 export type JoinedRoom = { roomCode: string; playerId: string };
 
+/** Intents that act on one property, named by its Board index. */
+export type PropertyIntent = 'BUILD' | 'SELL_BUILDING' | 'MORTGAGE' | 'UNMORTGAGE';
+
 export type ClientToServer = {
   CREATE_ROOM: (msg: { name: string; color: string }, ack: Ack<JoinedRoom>) => void;
   JOIN_ROOM: (msg: { roomCode: string; name: string; color: string }, ack: Ack<JoinedRoom>) => void;
@@ -20,6 +23,9 @@ export type ClientToServer = {
   /** `index` is the street's Board index. */
   BUILD: (msg: { index: number }, ack: Ack) => void;
   SELL_BUILDING: (msg: { index: number }, ack: Ack) => void;
+  /** `index` is the property's Board index. */
+  MORTGAGE: (msg: { index: number }, ack: Ack) => void;
+  UNMORTGAGE: (msg: { index: number }, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
 };
 

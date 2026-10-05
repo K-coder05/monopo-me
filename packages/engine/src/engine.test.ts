@@ -464,6 +464,22 @@ describe('rent', () => {
     expect(player(state, 'ann').cash).toBe(1475);
   });
 
+  it('does not count mortgaged utilities', () => {
+    const game = owning(owning(started(), 'bob', [12]), 'bob', [28], { mortgaged: true });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(6, 6));
+
+    expect(player(state, 'ann').cash).toBe(1500 - 4 * 12);
+  });
+
+  it('still multiplies an unmortgaged street whose Colour group has a mortgaged street', () => {
+    const game = owning(owning(started(), 'bob', [3]), 'bob', [1], { mortgaged: true });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(player(state, 'ann').cash).toBe(1492);
+  });
+
   it('charges nothing when the owner is in Jail, by default', () => {
     const game = withPlayer(owning(started(), 'bob', [3]), 'bob', { inJail: true });
 
@@ -1597,5 +1613,163 @@ describe('selling buildings', () => {
 
       expect(sell(game, 3, rules).state.deeds[3]?.buildings).toBe(3);
     });
+  });
+});
+
+/** Sets the List price of the space at `index`. */
+function priced(state: GameState, index: number, price: number): GameState {
+  return { ...state, board: state.board.map((s) => (s.index === index ? { ...s, price } : s)) };
+}
+
+describe('mortgaging', () => {
+  function mortgage(state: GameState, index: number, rules: Rules = defaultRules, playerId = 'ann') {
+    return act(state, { type: 'MORTGAGE', playerId, index }, noDice, rules);
+  }
+
+  it('pays the owner mortgageRate of the List price', () => {
+    const { state, events } = mortgage(owning(started(), 'ann', [1]), 1);
+
+    expect(state.deeds[1]).toEqual({ ownerId: 'ann', buildings: 0, mortgaged: true });
+    expect(player(state, 'ann').cash).toBe(1530);
+    expect(state.turn?.step).toBe('awaitRoll');
+    expect(events).toEqual([{ type: 'PROPERTY_MORTGAGED', playerId: 'ann', index: 1, amount: 30 }]);
+  });
+
+  it('reads the mortgage rate from the Rules, rounding down', () => {
+    const rules = { ...defaultRules, mortgageRate: 0.33 };
+
+    const { state } = mortgage(owning(started(rules), 'ann', [1]), 1, rules);
+
+    expect(player(state, 'ann').cash).toBe(1519);
+  });
+
+  it('follows the current List price after it was edited', () => {
+    const game = priced(owning(started(), 'ann', [1]), 1, 90);
+
+    expect(player(mortgage(game, 1).state, 'ann').cash).toBe(1545);
+  });
+
+  it('mortgages stations and utilities', () => {
+    const game = owning(started(), 'ann', [5, 12]);
+
+    const once = mortgage(game, 5).state;
+    const { state } = mortgage(once, 12);
+
+    expect(player(state, 'ann').cash).toBe(1500 + 100 + 75);
+  });
+
+  it('is refused while any street in the Colour group has buildings', () => {
+    const game = owning(owning(started(), 'ann', [1]), 'ann', [3], { buildings: 1 });
+
+    expect(() => mortgage(game, 1)).toThrow(IllegalActionError);
+    expect(() => mortgage(game, 3)).toThrow(IllegalActionError);
+  });
+
+  it('is refused on a property that is already mortgaged', () => {
+    const game = owning(started(), 'ann', [1], { mortgaged: true });
+
+    expect(() => mortgage(game, 1)).toThrow(IllegalActionError);
+  });
+
+  it("is refused on another Player's property, an unowned one, or off the Board", () => {
+    const game = owning(started(), 'bob', [1]);
+
+    expect(() => mortgage(game, 1)).toThrow(IllegalActionError);
+    expect(() => mortgage(game, 3)).toThrow(IllegalActionError);
+    expect(() => mortgage(game, 40)).toThrow(IllegalActionError);
+  });
+
+  it('is allowed after the landing is resolved', () => {
+    // 0 + 7 lands on Chance
+    const rolled = act(owning(started(), 'ann', [1]), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4)).state;
+
+    const { state } = mortgage(rolled, 1);
+
+    expect(state.deeds[1]?.mortgaged).toBe(true);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+  });
+
+  it('is refused while a buy decision is open', () => {
+    // 0 + 6 lands on unowned Light Blue 1
+    const offered = act(owning(started(), 'ann', [1]), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 4)).state;
+
+    expect(() => mortgage(offered, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused out of turn', () => {
+    expect(() => mortgage(owning(started(), 'bob', [1]), 1, defaultRules, 'bob')).toThrow(IllegalActionError);
+  });
+
+  it('stops the property charging rent', () => {
+    // ann mortgages Brown 2 and plays out the turn; bob rolls 0 + 3 onto it
+    let game = mortgage(owning(started(), 'ann', [3]), 3).state;
+    game = playTurn(game, 'ann', dice(3, 4));
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'bob' }, dice(1, 2));
+
+    expect(player(state, 'bob').cash).toBe(1500);
+  });
+});
+
+describe('unmortgaging', () => {
+  function unmortgage(state: GameState, index: number, rules: Rules = defaultRules, playerId = 'ann') {
+    return act(state, { type: 'UNMORTGAGE', playerId, index }, noDice, rules);
+  }
+
+  function mortgaged(rules: Rules = defaultRules): GameState {
+    return owning(started(rules), 'ann', [1], { mortgaged: true });
+  }
+
+  it('charges the mortgage value plus unmortgageInterest', () => {
+    const { state, events } = unmortgage(mortgaged(), 1);
+
+    expect(state.deeds[1]).toEqual({ ownerId: 'ann', buildings: 0, mortgaged: false });
+    expect(player(state, 'ann').cash).toBe(1500 - 33);
+    expect(events).toEqual([{ type: 'PROPERTY_UNMORTGAGED', playerId: 'ann', index: 1, cost: 33 }]);
+  });
+
+  it('rounds the interest up', () => {
+    // List price 70: mortgage value 35, interest 3.5
+    expect(player(unmortgage(priced(mortgaged(), 1, 70), 1).state, 'ann').cash).toBe(1500 - 39);
+  });
+
+  it('reads the interest from the Rules', () => {
+    const rules = { ...defaultRules, unmortgageInterest: 0.5 };
+
+    expect(player(unmortgage(mortgaged(rules), 1, rules).state, 'ann').cash).toBe(1500 - 45);
+  });
+
+  it('does not feed the Jackpot', () => {
+    const rules = { ...defaultRules, freeParkingMode: 'jackpot' as const };
+
+    expect(unmortgage(mortgaged(rules), 1, rules).state.bank.jackpot).toBe(0);
+  });
+
+  it('is refused on a property that is not mortgaged', () => {
+    expect(() => unmortgage(owning(started(), 'ann', [1]), 1)).toThrow(IllegalActionError);
+  });
+
+  it("is refused on another Player's property", () => {
+    expect(() => unmortgage(owning(started(), 'bob', [1], { mortgaged: true }), 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused when the Player cannot afford it', () => {
+    const game = withPlayer(mortgaged(), 'ann', { cash: 32 });
+
+    expect(() => unmortgage(game, 1)).toThrow(IllegalActionError);
+  });
+
+  it('is refused out of turn', () => {
+    expect(() => unmortgage(owning(started(), 'bob', [1], { mortgaged: true }), 1, defaultRules, 'bob')).toThrow(
+      IllegalActionError,
+    );
+  });
+
+  it('lets the owner build on the Colour group again', () => {
+    const game = owning(mortgaged(), 'ann', [3]);
+
+    const lifted = unmortgage(game, 1).state;
+
+    expect(act(lifted, { type: 'BUILD', playerId: 'ann', index: 1 }).state.deeds[1]?.buildings).toBe(1);
   });
 });

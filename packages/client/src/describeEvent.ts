@@ -70,6 +70,10 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} built ${event.buildings === HOTEL ? 'a hotel' : 'a house'} on ${space(event.index)} for ${event.cost}`;
     case 'BUILDING_SOLD':
       return `${name(event.playerId)} sold a building on ${space(event.index)} for ${event.amount}`;
+    case 'PROPERTY_MORTGAGED':
+      return `${name(event.playerId)} mortgaged ${space(event.index)} for ${event.amount}`;
+    case 'PROPERTY_UNMORTGAGED':
+      return `${name(event.playerId)} unmortgaged ${space(event.index)} for ${event.cost}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
   }

@@ -7,6 +7,7 @@ import {
   type ActionResult,
   type ClientToServer,
   type JoinedRoom,
+  type PropertyIntent,
   type ServerToClient,
 } from '@landlord/engine';
 import { Rooms } from './rooms';
@@ -107,8 +108,10 @@ io.on('connection', (socket: GameSocket) => {
     }),
   );
 
-  // The engine validates the index (a street the Player owns, built or sold evenly).
-  for (const type of ['BUILD', 'SELL_BUILDING'] as const) {
+  // The engine validates the index (a street the Player owns, built or sold evenly; a property to
+  // mortgage or unmortgage).
+  const propertyIntents: PropertyIntent[] = ['BUILD', 'SELL_BUILDING', 'MORTGAGE', 'UNMORTGAGE'];
+  for (const type of propertyIntents) {
     socket.on(type, (msg, ack) =>
       handle(ack, () => {
         const { roomCode, playerId } = requirePlayer(socket);
