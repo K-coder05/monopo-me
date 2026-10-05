@@ -23,6 +23,8 @@ import type {
   Rules,
   SkipReason,
   SpaceDefinition,
+  Trade,
+  TradeSide,
   Turn,
 } from './types';
 
@@ -126,6 +128,18 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       break;
     case 'UNMORTGAGE':
       next = unmortgage(state, action.playerId, action.index, rules, events);
+      break;
+    case 'PROPOSE_TRADE':
+      next = proposeTrade(state, action, rules, events);
+      break;
+    case 'ACCEPT_TRADE':
+      next = acceptTrade(state, action.playerId, rules, events);
+      break;
+    case 'REJECT_TRADE':
+      next = closeTrade(state, action.playerId, 'partner', events);
+      break;
+    case 'WITHDRAW_TRADE':
+      next = closeTrade(state, action.playerId, 'proposer', events);
       break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
@@ -733,6 +747,105 @@ function goIndex(board: SpaceDefinition[]): number | undefined {
   return board.find((s) => s.type === 'go')?.index;
 }
 
+/** Whether `playerId` may propose a Trade to `partnerId` right now, ignoring any open offer. */
+function mayPropose(state: GameState, playerId: string, partnerId: string): boolean {
+  const turn = state.turn;
+  const debtor = turn?.step === 'awaitDebt' ? state.debts[0]?.debtorId : undefined;
+  return turn?.playerId === playerId || turn?.playerId === partnerId || debtor === playerId;
+}
+
+/** Checks that `side` hands over only what `owner` has, and that nothing in it is locked by buildings. */
+function requireTradeSide(state: GameState, owner: Player, side: TradeSide): void {
+  const { cash, properties, cards } = side;
+  if (!Number.isInteger(cash) || cash < 0) throw new IllegalActionError('Trade cash must be a whole number, 0 or more');
+  if (cash > owner.cash) throw new IllegalActionError(`${owner.name} does not have ${cash} to trade`);
+  if (new Set(properties).size !== properties.length) throw new IllegalActionError('A property is listed twice');
+  for (const index of properties) {
+    const space = state.board[index];
+    if (!space || !isProperty(space) || state.deeds[index]?.ownerId !== owner.id) {
+      throw new IllegalActionError(`${owner.name} does not own that property`);
+    }
+    if (groupHasBuildings(state, space)) {
+      throw new IllegalActionError('Sell the buildings in that Colour group before trading its streets');
+    }
+  }
+  const held = [...owner.heldCards];
+  for (const id of cards) {
+    const at = held.indexOf(id);
+    if (at < 0) throw new IllegalActionError(`${owner.name} does not hold that card`);
+    held.splice(at, 1);
+  }
+}
+
+function requireTradingOpen(state: GameState, rules: Rules): void {
+  if (state.phase !== 'playing' || !state.turn) throw new IllegalActionError('The game has not started');
+  if (!rules.tradingEnabled) throw new IllegalActionError('Trading is turned off');
+}
+
+function proposeTrade(
+  state: GameState,
+  action: Extract<Action, { type: 'PROPOSE_TRADE' }>,
+  rules: Rules,
+  events: GameEvent[],
+): GameState {
+  requireTradingOpen(state, rules);
+  const { playerId, partnerId, give, take } = action;
+  if (playerId === partnerId) throw new IllegalActionError('You cannot trade with yourself');
+  const proposer = findPlayer(state, playerId);
+  const partner = findPlayer(state, partnerId);
+  if (proposer.bankrupt || partner.bankrupt) throw new IllegalActionError('Bankrupt Players cannot trade');
+  const open = state.trade;
+  const isCounter = open?.partnerId === playerId && open.proposerId === partnerId;
+  const isRevision = open?.proposerId === playerId && open.partnerId === partnerId;
+  if (open && !isCounter && !isRevision) throw new IllegalActionError('Another offer is already open');
+  if (!open && !mayPropose(state, playerId, partnerId)) {
+    throw new IllegalActionError('You cannot propose a trade to that Player right now');
+  }
+  const empty = (s: TradeSide) => s.cash === 0 && s.properties.length === 0 && s.cards.length === 0;
+  if (empty(give) && empty(take)) throw new IllegalActionError('The offer is empty');
+  requireTradeSide(state, proposer, give);
+  requireTradeSide(state, partner, take);
+  const trade: Trade = { proposerId: playerId, partnerId, give, take };
+  events.push({ type: 'TRADE_PROPOSED', trade, counter: isCounter });
+  return { ...state, trade };
+}
+
+/** Clears the open offer for its `role`: the partner rejects it, the proposer withdraws it. */
+function closeTrade(state: GameState, playerId: string, role: 'proposer' | 'partner', events: GameEvent[]): GameState {
+  const trade = state.trade;
+  if (!trade) throw new IllegalActionError('There is no open offer');
+  if ((role === 'proposer' ? trade.proposerId : trade.partnerId) !== playerId) {
+    throw new IllegalActionError(role === 'proposer' ? 'Only the proposer can withdraw the offer' : 'Only the partner can reject the offer');
+  }
+  events.push({ type: role === 'proposer' ? 'TRADE_WITHDRAWN' : 'TRADE_REJECTED', trade });
+  return { ...state, trade: undefined };
+}
+
+function acceptTrade(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  requireTradingOpen(state, rules);
+  const trade = state.trade;
+  if (!trade) throw new IllegalActionError('There is no open offer');
+  if (trade.partnerId !== playerId) throw new IllegalActionError('Only the partner can accept the offer');
+  const { proposerId, partnerId, give, take } = trade;
+  // The sides may have changed since the offer was made.
+  requireTradeSide(state, findPlayer(state, proposerId), give);
+  requireTradeSide(state, findPlayer(state, partnerId), take);
+
+  const deeds = { ...state.deeds };
+  for (const index of give.properties) deeds[index] = { ...deeds[index]!, ownerId: partnerId };
+  for (const index of take.properties) deeds[index] = { ...deeds[index]!, ownerId: proposerId };
+  const swap = (p: Player, out: TradeSide, into: TradeSide): Player => {
+    const held = [...p.heldCards];
+    for (const id of out.cards) held.splice(held.indexOf(id), 1);
+    return { ...p, cash: p.cash - out.cash + into.cash, heldCards: [...held, ...into.cards] };
+  };
+  const players = state.players.map((p) =>
+    p.id === proposerId ? swap(p, give, take) : p.id === partnerId ? swap(p, take, give) : p,
+  );
+  events.push({ type: 'TRADE_COMPLETED', trade });
+  return { ...state, players, deeds, trade: undefined };
+}
+
 function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameState {
   requireTurn(state, playerId, 'awaitEndTurn');
   events.push({ type: 'TURN_ENDED', playerId });
@@ -897,13 +1010,14 @@ function bankrupt(state: GameState, playerId: string, creditor: Creditor, rules:
     bankruptcies: [...next.bankruptcies, playerId],
     extraTurns: next.extraTurns.filter((id) => id !== playerId),
     debts: next.debts.filter((d) => !cancelled(d)),
+    trade: next.trade && (next.trade.proposerId === playerId || next.trade.partnerId === playerId) ? undefined : next.trade,
   };
 
   const left = activePlayers(next);
   if (left.length === 1) {
     const winnerId = left[0]!.id;
     events.push({ type: 'GAME_OVER', winnerId });
-    return { ...next, phase: 'finished', turn: undefined, auction: undefined, auctionQueue: undefined, debts: [], winnerId };
+    return { ...next, phase: 'finished', turn: undefined, auction: undefined, auctionQueue: undefined, debts: [], trade: undefined, winnerId };
   }
   if (creditor.type === 'bank' && owned.length > 0) {
     return nextBankruptcyAuction({ ...next, auctionQueue: owned }, rules, now, events);
@@ -936,6 +1050,7 @@ function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[], dec
     players: state.players.map((p) => newPlayer(p, rules, board)),
     deeds: {},
     debts: [],
+    trade: undefined,
     bankruptcies: [],
     winnerId: undefined,
     auction: undefined,

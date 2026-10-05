@@ -16,6 +16,7 @@ import { TitleDeed } from './TitleDeed';
 import { AuctionModal } from './AuctionModal';
 import { CardModal } from './CardModal';
 import { DebtModal } from './DebtModal';
+import { TradeModal, tradePartners } from './TradeModal';
 import { describeBuildings, groupColor } from './spaces';
 
 /** Spaces grouped by Colour group (stations and utilities form their own groups), in Board order. */
@@ -31,7 +32,9 @@ function byGroup(spaces: SpaceDefinition[]): [string, SpaceDefinition[]][] {
 export function Game({ game, me, clockOffset }: { game: GameState; me: string; clockOffset: number }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [building, setBuilding] = useState(false);
   const closeDeed = useCallback(() => setSelected(null), []);
+  const closeBuilder = useCallback(() => setBuilding(false), []);
   const turn = game.turn!;
   const myTurn = turn.playerId === me;
   const logEnd = useRef<HTMLLIElement>(null);
@@ -105,6 +108,13 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
           </button>
           <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
             End turn
+          </button>
+          <button
+            className="secondary"
+            disabled={!game.rules.tradingEnabled || !!game.trade || !!myself?.bankrupt || tradePartners(game, me).length === 0}
+            onClick={() => setBuilding(true)}
+          >
+            Trade
           </button>
         </div>
         {error && <p className="error">{error}</p>}
@@ -207,7 +217,19 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
       {/* Stays up under an open title deed so nobody loses the countdown while checking the property. */}
       {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
 
-      {game.turn?.step === 'awaitDebt' && <DebtModal game={game} me={me} />}
+      {game.turn?.step === 'awaitDebt' && <DebtModal game={game} me={me} onTrade={() => setBuilding(true)} />}
+
+      {/* After the Debt modal so a debtor's builder opens on top of it. Keyed so each offer starts a fresh builder. */}
+      {(building || game.trade) && (
+        <TradeModal
+          key={`${building}-${JSON.stringify(game.trade ?? null)}`}
+          game={game}
+          me={me}
+          building={building}
+          onBuild={() => setBuilding(true)}
+          onClose={closeBuilder}
+        />
+      )}
 
       {game.turn?.step === 'awaitCard' && <CardModal game={game} me={me} />}
 

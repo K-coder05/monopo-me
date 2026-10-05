@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import type { Ack, ClientToServer, PropertyIntent, ServerToClient } from '@landlord/engine';
+import type { Ack, ClientToServer, PropertyIntent, ServerToClient, TradeSide } from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
 
@@ -12,6 +12,9 @@ export type Intent =
   | 'DECLINE_PROPERTY'
   | 'PASS_AUCTION'
   | 'END_TURN'
+  | 'ACCEPT_TRADE'
+  | 'REJECT_TRADE'
+  | 'WITHDRAW_TRADE'
   | 'PAY_DEBT'
   | 'DECLARE_BANKRUPTCY'
   | 'REMATCH'
@@ -43,4 +46,9 @@ export function continueCard(choiceId?: string): Promise<string | null> {
 /** Bids `amount` in the open Auction; resolves like `send`. */
 export function placeBid(amount: number): Promise<string | null> {
   return new Promise((resolve) => socket.emit('PLACE_BID', { amount }, toError(resolve)));
+}
+
+/** Proposes, revises or counters the open Trade; resolves like `send`. */
+export function proposeTrade(partnerId: string, give: TradeSide, take: TradeSide): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('PROPOSE_TRADE', { partnerId, give, take }, toError(resolve)));
 }

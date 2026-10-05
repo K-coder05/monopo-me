@@ -179,6 +179,23 @@ export type Debt = {
 /** What the active turn does once its Debts are settled (or the debtor is bankrupt). */
 export type AfterDebts = 'landingResolved' | { moveFromJail: number };
 
+/** What one side of a Trade hands over. */
+export type TradeSide = {
+  cash: number;
+  /** Board indexes of the properties; none may sit in a Colour group with buildings. */
+  properties: number[];
+  /** Ids of held get-out-of-jail cards. */
+  cards: string[];
+};
+
+/** The Room's one open offer: `give` goes from the proposer to the partner, `take` the other way. */
+export type Trade = {
+  proposerId: string;
+  partnerId: string;
+  give: TradeSide;
+  take: TradeSide;
+};
+
 export type Bid = { playerId: string; amount: number };
 
 /** Open bidding for one unowned property. */
@@ -252,6 +269,10 @@ export type GameEvent =
   | { type: 'BUILDING_SOLD'; playerId: string; index: number; buildings: number; amount: number }
   | { type: 'PROPERTY_MORTGAGED'; playerId: string; index: number; amount: number }
   | { type: 'PROPERTY_UNMORTGAGED'; playerId: string; index: number; cost: number }
+  | { type: 'TRADE_PROPOSED'; trade: Trade; counter: boolean }
+  | { type: 'TRADE_REJECTED'; trade: Trade }
+  | { type: 'TRADE_WITHDRAWN'; trade: Trade }
+  | { type: 'TRADE_COMPLETED'; trade: Trade }
   | { type: 'TURN_ENDED'; playerId: string }
   | { type: 'CARD_DRAWN'; playerId: string; deck: DeckKind; cardId: string; title: string; text: string }
   | { type: 'DECK_EMPTY'; playerId: string; deck: DeckKind }
@@ -286,6 +307,8 @@ export type GameState = {
   turn?: Turn;
   /** Present while the turn is at the 'auction' step. */
   auction?: Auction;
+  /** The one open Trade offer, if any. */
+  trade?: Trade;
   /** Debts waiting to be settled, in order; the first one is the one blocking play. */
   debts: Debt[];
   /** Bankrupt Players in the order they went out. */
@@ -323,6 +346,11 @@ export type Action =
   | { type: 'SELL_BUILDING'; playerId: string; index: number }
   | { type: 'MORTGAGE'; playerId: string; index: number }
   | { type: 'UNMORTGAGE'; playerId: string; index: number }
+  /** From the active Player to anyone, from anyone to the active Player, or from a debtor to anyone. */
+  | { type: 'PROPOSE_TRADE'; playerId: string; partnerId: string; give: TradeSide; take: TradeSide }
+  | { type: 'ACCEPT_TRADE'; playerId: string }
+  | { type: 'REJECT_TRADE'; playerId: string }
+  | { type: 'WITHDRAW_TRADE'; playerId: string }
   | { type: 'END_TURN'; playerId: string }
   | { type: 'PAY_DEBT'; playerId: string }
   | { type: 'DECLARE_BANKRUPTCY'; playerId: string }

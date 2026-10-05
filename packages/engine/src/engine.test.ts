@@ -2053,3 +2053,246 @@ describe('Game Over', () => {
     expect(state.winnerId).toBeUndefined();
   });
 });
+
+describe('Trading', () => {
+  const nothing = { cash: 0, properties: [] as number[], cards: [] as string[] };
+  const side = (patch: Partial<typeof nothing> = {}) => ({ ...nothing, ...patch });
+
+  function propose(
+    state: GameState,
+    playerId: string,
+    partnerId: string,
+    give = nothing,
+    take = nothing,
+    rules: Rules = defaultRules,
+  ) {
+    return act(state, { type: 'PROPOSE_TRADE', playerId, partnerId, give, take }, noDice, rules);
+  }
+  const respond = (state: GameState, type: 'ACCEPT_TRADE' | 'REJECT_TRADE' | 'WITHDRAW_TRADE', playerId: string) =>
+    act(state, { type, playerId });
+
+  /** ann (active) owns Baltic (3); bob owns Oriental (6); cat owns Vermont (8). */
+  function market() {
+    return owning(owning(owning(started3(), 'ann', [3]), 'bob', [6]), 'cat', [8]);
+  }
+
+  describe('who can propose', () => {
+    it('lets the active Player propose to anyone', () => {
+      const { state, events } = propose(market(), 'ann', 'cat', side({ cash: 50 }), side({ properties: [8] }));
+
+      expect(state.trade).toEqual({
+        proposerId: 'ann',
+        partnerId: 'cat',
+        give: side({ cash: 50 }),
+        take: side({ properties: [8] }),
+      });
+      expect(events).toEqual([{ type: 'TRADE_PROPOSED', trade: state.trade, counter: false }]);
+    });
+
+    it('lets any Player propose to the active Player', () => {
+      expect(propose(market(), 'bob', 'ann', side({ cash: 10 }), side({ properties: [3] })).state.trade).toBeDefined();
+    });
+
+    it('refuses a Player proposing to another Player when neither is active', () => {
+      expect(() => propose(market(), 'bob', 'cat', side({ cash: 10 }))).toThrow(IllegalActionError);
+    });
+
+    it('lets a Player raising money for a Debt propose to anyone', () => {
+      const game = owing(market(), [['bob', 'ann', 100]]);
+
+      expect(propose(game, 'bob', 'cat', side({ properties: [6] }), side({ cash: 300 })).state.trade).toBeDefined();
+    });
+
+    it('refuses a Player who is not the one in Debt, even with a Debt queued', () => {
+      const game = owing(market(), [['bob', 'ann', 100]]);
+
+      expect(() => propose(game, 'cat', 'bob', side({ cash: 5 }))).toThrow(IllegalActionError);
+    });
+
+    it('refuses trading with oneself, an unknown Player, or an empty offer', () => {
+      expect(() => propose(market(), 'ann', 'ann', side({ cash: 5 }))).toThrow(IllegalActionError);
+      expect(() => propose(market(), 'ann', 'zed', side({ cash: 5 }))).toThrow(IllegalActionError);
+      expect(() => propose(market(), 'ann', 'bob')).toThrow(IllegalActionError);
+    });
+
+    it('refuses a bankrupt partner', () => {
+      expect(() => propose(withPlayer(market(), 'bob', { bankrupt: true }), 'ann', 'bob', side({ cash: 5 }))).toThrow(
+        IllegalActionError,
+      );
+    });
+
+    it('is blocked entirely when tradingEnabled is off', () => {
+      const rules = { ...defaultRules, tradingEnabled: false };
+
+      expect(() => propose(market(), 'ann', 'bob', side({ cash: 5 }), nothing, rules)).toThrow(IllegalActionError);
+    });
+
+    it('is blocked for a Player in Debt when tradingEnabled is off', () => {
+      const rules = { ...defaultRules, tradingEnabled: false };
+      const game = owing(market(), [['bob', 'ann', 100]]);
+
+      expect(() => propose(game, 'bob', 'cat', side({ cash: 5 }), nothing, rules)).toThrow(IllegalActionError);
+    });
+
+    it('blocks accepting an open offer once tradingEnabled is turned off', () => {
+      const open = propose(market(), 'ann', 'bob', side({ cash: 5 })).state;
+      const rules = { ...defaultRules, tradingEnabled: false };
+
+      expect(() => act(open, { type: 'ACCEPT_TRADE', playerId: 'bob' }, noDice, rules)).toThrow(IllegalActionError);
+    });
+  });
+
+  describe('what can be offered', () => {
+    it('refuses cash a side does not have', () => {
+      expect(() => propose(market(), 'ann', 'bob', side({ cash: 1501 }))).toThrow(IllegalActionError);
+      expect(() => propose(market(), 'ann', 'bob', nothing, side({ cash: 1501 }))).toThrow(IllegalActionError);
+    });
+
+    it('refuses negative or fractional cash', () => {
+      expect(() => propose(market(), 'ann', 'bob', side({ cash: -5 }))).toThrow(IllegalActionError);
+      expect(() => propose(market(), 'ann', 'bob', side({ cash: 2.5 }))).toThrow(IllegalActionError);
+    });
+
+    it('refuses a property the side does not own, or that is listed twice', () => {
+      expect(() => propose(market(), 'ann', 'bob', side({ properties: [6] }))).toThrow(IllegalActionError);
+      expect(() => propose(market(), 'ann', 'bob', side({ properties: [3, 3] }))).toThrow(IllegalActionError);
+    });
+
+    it('refuses a street in a group with buildings, even an unbuilt one', () => {
+      const game = owning(owning(started3(), 'ann', [1]), 'ann', [3], { buildings: 1 });
+
+      expect(() => propose(game, 'ann', 'bob', side({ properties: [3] }))).toThrow(IllegalActionError);
+      expect(() => propose(game, 'ann', 'bob', side({ properties: [1] }))).toThrow(IllegalActionError);
+    });
+
+    it('allows stations and utilities, and streets in groups without buildings', () => {
+      const game = owning(market(), 'ann', [5, 12]);
+
+      expect(propose(game, 'ann', 'bob', side({ properties: [3, 5, 12] })).state.trade).toBeDefined();
+    });
+
+    it('refuses a get-out-of-jail card the side does not hold', () => {
+      expect(() => propose(market(), 'ann', 'bob', side({ cards: ['free'] }))).toThrow(IllegalActionError);
+    });
+  });
+
+  describe('the open offer', () => {
+    const offer = () => propose(market(), 'ann', 'bob', side({ cash: 50 }), side({ properties: [6] })).state;
+
+    it('allows only one at a time, except a revision or counter from its parties', () => {
+      expect(() => propose(offer(), 'cat', 'ann', side({ cash: 5 }))).toThrow(IllegalActionError);
+    });
+
+    it('lets the proposer revise it', () => {
+      const { state, events } = propose(offer(), 'ann', 'bob', side({ cash: 80 }), side({ properties: [6] }));
+
+      expect(state.trade?.give.cash).toBe(80);
+      expect(events).toMatchObject([{ type: 'TRADE_PROPOSED', counter: false }]);
+    });
+
+    it('lets the partner counter, replacing the offer', () => {
+      const { state, events } = propose(offer(), 'bob', 'ann', side({ properties: [6] }), side({ cash: 90 }));
+
+      expect(state.trade).toMatchObject({ proposerId: 'bob', partnerId: 'ann', take: side({ cash: 90 }) });
+      expect(events).toMatchObject([{ type: 'TRADE_PROPOSED', counter: true }]);
+    });
+
+    it('refuses a counter sent to someone other than the proposer', () => {
+      expect(() => propose(offer(), 'bob', 'cat', side({ cash: 5 }))).toThrow(IllegalActionError);
+    });
+
+    it('is cleared when the proposer withdraws, and only they can', () => {
+      expect(() => respond(offer(), 'WITHDRAW_TRADE', 'bob')).toThrow(IllegalActionError);
+
+      const { state, events } = respond(offer(), 'WITHDRAW_TRADE', 'ann');
+
+      expect(state.trade).toBeUndefined();
+      expect(events).toMatchObject([{ type: 'TRADE_WITHDRAWN' }]);
+    });
+
+    it('is cleared when the partner rejects, and only they can', () => {
+      expect(() => respond(offer(), 'REJECT_TRADE', 'ann')).toThrow(IllegalActionError);
+      expect(() => respond(offer(), 'REJECT_TRADE', 'cat')).toThrow(IllegalActionError);
+
+      const { state, events } = respond(offer(), 'REJECT_TRADE', 'bob');
+
+      expect(state.trade).toBeUndefined();
+      expect(events).toMatchObject([{ type: 'TRADE_REJECTED' }]);
+    });
+
+    it('cannot be accepted by the proposer or a bystander', () => {
+      expect(() => respond(offer(), 'ACCEPT_TRADE', 'ann')).toThrow(IllegalActionError);
+      expect(() => respond(offer(), 'ACCEPT_TRADE', 'cat')).toThrow(IllegalActionError);
+    });
+
+    it('cannot be answered when none is open', () => {
+      expect(() => respond(market(), 'ACCEPT_TRADE', 'bob')).toThrow(IllegalActionError);
+    });
+
+    it('is cleared when either party goes bankrupt', () => {
+      const game = owing(withPlayer(offer(), 'bob', { cash: 0 }), [['bob', 'bank', 5000]]);
+
+      const { state } = act(game, { type: 'DECLARE_BANKRUPTCY', playerId: 'bob' });
+
+      expect(state.trade).toBeUndefined();
+    });
+  });
+
+  describe('accepting', () => {
+    it('swaps cash and properties', () => {
+      const game = propose(market(), 'ann', 'bob', side({ cash: 50, properties: [3] }), side({ properties: [6] })).state;
+
+      const { state, events } = respond(game, 'ACCEPT_TRADE', 'bob');
+
+      expect(state.deeds[3]?.ownerId).toBe('bob');
+      expect(state.deeds[6]?.ownerId).toBe('ann');
+      expect(player(state, 'ann').cash).toBe(1450);
+      expect(player(state, 'bob').cash).toBe(1550);
+      expect(state.trade).toBeUndefined();
+      expect(events).toMatchObject([{ type: 'TRADE_COMPLETED' }]);
+    });
+
+    it('transfers mortgaged properties with no fee, still mortgaged', () => {
+      const game = propose(owning(market(), 'ann', [5], { mortgaged: true }), 'ann', 'bob', side({ properties: [5] }))
+        .state;
+
+      const { state } = respond(game, 'ACCEPT_TRADE', 'bob');
+
+      expect(state.deeds[5]).toEqual({ ownerId: 'bob', buildings: 0, mortgaged: true });
+      expect(player(state, 'bob').cash).toBe(1500);
+    });
+
+    it('moves get-out-of-jail cards', () => {
+      const game = withPlayer(market(), 'ann', { heldCards: ['free'] });
+      const open = propose(game, 'ann', 'bob', side({ cards: ['free'] })).state;
+
+      const { state } = respond(open, 'ACCEPT_TRADE', 'bob');
+
+      expect(player(state, 'ann').heldCards).toEqual([]);
+      expect(player(state, 'bob').heldCards).toEqual(['free']);
+    });
+
+    it('is refused if a side no longer has what was offered', () => {
+      const open = propose(market(), 'ann', 'bob', side({ cash: 100 }), side({ properties: [6] })).state;
+      const poorer = withPlayer(open, 'ann', { cash: 10 });
+      const sold = { ...open, deeds: { ...open.deeds, [6]: { ownerId: 'cat', buildings: 0, mortgaged: false } } };
+      const built = { ...open, deeds: { ...open.deeds, [6]: { ownerId: 'bob', buildings: 1, mortgaged: false } } };
+
+      expect(() => respond(poorer, 'ACCEPT_TRADE', 'bob')).toThrow(IllegalActionError);
+      expect(() => respond(sold, 'ACCEPT_TRADE', 'bob')).toThrow(IllegalActionError);
+      expect(() => respond(built, 'ACCEPT_TRADE', 'bob')).toThrow(IllegalActionError);
+    });
+
+    it('works while a Player in Debt raises money, and the Debt can then be paid', () => {
+      const debt = owing(withPlayer(market(), 'bob', { cash: 10 }), [['bob', 'ann', 100]]);
+      const open = propose(debt, 'bob', 'cat', side({ properties: [6] }), side({ cash: 200 })).state;
+
+      const traded = respond(open, 'ACCEPT_TRADE', 'cat').state;
+      const { state } = act(traded, { type: 'PAY_DEBT', playerId: 'bob' });
+
+      expect(player(traded, 'bob').cash).toBe(210);
+      expect(state.debts).toEqual([]);
+      expect(player(state, 'bob').cash).toBe(110);
+    });
+  });
+});

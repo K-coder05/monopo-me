@@ -531,3 +531,15 @@ button.small {
 .ranking {
   padding-left: 1.5rem;
 }
+
+.trade-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.trade-side input[type='number'] {
+  width: 5rem;
+}

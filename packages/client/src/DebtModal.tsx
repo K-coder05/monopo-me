@@ -3,7 +3,7 @@ import { groupHasBuildings, mortgageValue, type GameState } from '@landlord/engi
 import { send, sendPropertyAction } from './socket';
 
 /** Shown to everyone while a Debt blocks play; only the debtor gets the controls. */
-export function DebtModal({ game, me }: { game: GameState; me: string }) {
+export function DebtModal({ game, me, onTrade }: { game: GameState; me: string; onTrade: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const debt = game.debts[0];
   if (!debt) return null;
@@ -75,6 +75,9 @@ export function DebtModal({ game, me }: { game: GameState; me: string }) {
         <div className="actions">
           <button disabled={short > 0} onClick={() => run(send('PAY_DEBT'))}>
             Pay {debt.amount}
+          </button>
+          <button className="secondary" disabled={!game.rules.tradingEnabled || !!game.trade} onClick={onTrade}>
+            Trade
           </button>
           <button className="danger" disabled={short <= 0} onClick={() => run(send('DECLARE_BANKRUPTCY'))}>
             Declare Bankruptcy

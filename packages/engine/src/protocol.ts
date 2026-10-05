@@ -1,4 +1,4 @@
-import type { GameEvent, GameState } from './types';
+import type { GameEvent, GameState, TradeSide } from './types';
 
 /** Socket messages shared by server and client. */
 
@@ -29,6 +29,11 @@ export type ClientToServer = {
   /** `index` is the property's Board index. */
   MORTGAGE: (msg: { index: number }, ack: Ack) => void;
   UNMORTGAGE: (msg: { index: number }, ack: Ack) => void;
+  /** A proposal while an offer is open is a counter-offer (from its partner) or a revision (from its proposer). */
+  PROPOSE_TRADE: (msg: { partnerId: string; give: TradeSide; take: TradeSide }, ack: Ack) => void;
+  ACCEPT_TRADE: (msg: object, ack: Ack) => void;
+  REJECT_TRADE: (msg: object, ack: Ack) => void;
+  WITHDRAW_TRADE: (msg: object, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
   PAY_DEBT: (msg: object, ack: Ack) => void;
   DECLARE_BANKRUPTCY: (msg: object, ack: Ack) => void;

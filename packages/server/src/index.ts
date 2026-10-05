@@ -8,6 +8,7 @@ import {
   type ClientToServer,
   type JoinedRoom,
   type PropertyIntent,
+  type TradeSide,
   type ServerToClient,
 } from '@landlord/engine';
 import { Rooms } from './rooms';
@@ -65,6 +66,16 @@ function bindAndBroadcast(socket: GameSocket, result: JoinedRoom & ActionResult)
   return socket.data.player;
 }
 
+/** Coerces untrusted socket input into a TradeSide; the engine checks the values. */
+function toTradeSide(raw: Partial<TradeSide> | undefined): TradeSide {
+  const list = <T>(items: unknown, keep: (x: unknown) => x is T): T[] => (Array.isArray(items) ? items.filter(keep) : []);
+  return {
+    cash: Number(raw?.cash ?? 0),
+    properties: list(raw?.properties, (x): x is number => typeof x === 'number'),
+    cards: list(raw?.cards, (x): x is string => typeof x === 'string'),
+  };
+}
+
 io.on('connection', (socket: GameSocket) => {
   socket.on('CREATE_ROOM', (msg, ack) =>
     handle(ack, () => {
@@ -90,6 +101,9 @@ io.on('connection', (socket: GameSocket) => {
     'DECLINE_PROPERTY',
     'PASS_AUCTION',
     'END_TURN',
+    'ACCEPT_TRADE',
+    'REJECT_TRADE',
+    'WITHDRAW_TRADE',
     'PAY_DEBT',
     'DECLARE_BANKRUPTCY',
     'REMATCH',
@@ -119,6 +133,18 @@ io.on('connection', (socket: GameSocket) => {
       const { roomCode, playerId } = requirePlayer(socket);
       const choiceId = typeof msg?.choiceId === 'string' ? msg.choiceId : undefined;
       broadcast(roomCode, rooms.act(roomCode, { type: 'CONTINUE_CARD', playerId, choiceId }));
+      return {};
+    }),
+  );
+
+  // The engine validates who may propose, what is on offer and whether the Players can afford it.
+  socket.on('PROPOSE_TRADE', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      const partnerId = String(msg?.partnerId ?? '');
+      const give = toTradeSide(msg?.give);
+      const take = toTradeSide(msg?.take);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'PROPOSE_TRADE', playerId, partnerId, give, take }));
       return {};
     }),
   );

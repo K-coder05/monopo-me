@@ -1,4 +1,4 @@
-import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason } from '@landlord/engine';
+import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason, type TradeSide } from '@landlord/engine';
 
 const SKIP_TEXT: Record<SkipReason, string> = {
   selfTransfer: 'a Player cannot pay themselves',
@@ -14,6 +14,15 @@ export function describeEvent(event: GameEvent, game: GameState): string {
   const name = (id: string) => game.players.find((p) => p.id === id)?.name ?? 'Someone';
   const creditor = (c: Creditor) => (c.type === 'bank' ? 'the bank' : name(c.playerId));
   const space = (index: number) => game.board[index]?.name ?? `space ${index}`;
+
+  const side = (s: TradeSide) => {
+    const parts = [
+      ...(s.cash > 0 ? [`${s.cash} cash`] : []),
+      ...s.properties.map(space),
+      ...s.cards.map(() => 'a jail card'),
+    ];
+    return parts.length > 0 ? parts.join(', ') : 'nothing';
+  };
 
   switch (event.type) {
     case 'PLAYER_JOINED':
@@ -84,6 +93,14 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} mortgaged ${space(event.index)} for ${event.amount}`;
     case 'PROPERTY_UNMORTGAGED':
       return `${name(event.playerId)} unmortgaged ${space(event.index)} for ${event.cost}`;
+    case 'TRADE_PROPOSED':
+      return `${name(event.trade.proposerId)} ${event.counter ? 'countered' : 'offered'} ${name(event.trade.partnerId)}: ${side(event.trade.give)} for ${side(event.trade.take)}`;
+    case 'TRADE_REJECTED':
+      return `${name(event.trade.partnerId)} rejected ${name(event.trade.proposerId)}'s offer`;
+    case 'TRADE_WITHDRAWN':
+      return `${name(event.trade.proposerId)} withdrew their offer to ${name(event.trade.partnerId)}`;
+    case 'TRADE_COMPLETED':
+      return `Trade: ${name(event.trade.proposerId)} gave ${side(event.trade.give)}; ${name(event.trade.partnerId)} gave ${side(event.trade.take)}`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
     case 'CARD_DRAWN':
