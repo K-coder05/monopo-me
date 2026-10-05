@@ -126,17 +126,17 @@ describe('rolling and moving', () => {
 
   it('wraps past index 39 back round the Board', () => {
     let state = started();
-    // ann: 0 → 12 → 24 → 36, bob rolls in between
+    // ann: 0 → 11 → 22 → 33, bob rolls in between
     for (let i = 0; i < 3; i++) {
-      state = playTurn(state, 'ann', dice(6, 6));
+      state = playTurn(state, 'ann', dice(5, 6));
       state = playTurn(state, 'bob', dice(1, 2));
     }
-    expect(position(state, 'ann')).toBe(36);
+    expect(position(state, 'ann')).toBe(33);
 
-    const { state: next, events } = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(5, 3));
+    const { state: next, events } = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(5, 6));
 
     expect(position(next, 'ann')).toBe(4);
-    expect(events).toContainEqual({ type: 'MOVED', playerId: 'ann', from: 36, to: 4 });
+    expect(events).toContainEqual({ type: 'MOVED', playerId: 'ann', from: 33, to: 4 });
   });
 
   it('rolls the dice count and sides set in the Rules', () => {
@@ -909,5 +909,364 @@ describe('auctions', () => {
 
     expect(() => bid(landed, 'bob', 20)).toThrow(IllegalActionError);
     expect(() => pass(landed, 'bob')).toThrow(IllegalActionError);
+  });
+});
+
+/** Rolls, then declines any property offered (everyone passes in the Auction), leaving the turn to continue. */
+function rollResolved(state: GameState, playerId: string, rng: Rng, rules: Rules = defaultRules) {
+  const rolled = act(state, { type: 'ROLL_DICE', playerId }, rng, rules);
+  let next = rolled.state;
+  if (next.turn?.step === 'awaitBuyDecision') next = act(next, { type: 'DECLINE_PROPERTY', playerId }, noDice, rules).state;
+  for (const bidder of next.auction?.bidders ?? []) {
+    next = act(next, { type: 'PASS_AUCTION', playerId: bidder }, noDice, rules).state;
+  }
+  return { state: next, events: rolled.events };
+}
+
+describe('Doubles', () => {
+  it('give the Player another roll once the space is resolved', () => {
+    // 2 + 2 lands on Income Tax
+    const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 2));
+
+    expect(player(state, 'ann').cash).toBe(1300);
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+    expect(events).toContainEqual({ type: 'ROLL_AGAIN', playerId: 'ann' });
+    expect(() => act(state, { type: 'END_TURN', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('give the extra roll after the Player buys the property', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 3)).state;
+    expect(landed.turn?.step).toBe('awaitBuyDecision');
+
+    const { state } = act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' });
+
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+  });
+
+  it('give the extra roll after the Auction settles', () => {
+    const { state } = rollResolved(started(), 'ann', dice(3, 3));
+
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+  });
+
+  it('give the extra roll when declining without an Auction', () => {
+    const rules = { ...defaultRules, auctionOnDecline: false };
+
+    const { state } = rollResolved(started(rules), 'ann', dice(3, 3), rules);
+
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+  });
+
+  it('end the run once a roll is not Doubles', () => {
+    let state = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 2)).state;
+
+    state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    expect(position(state, 'ann')).toBe(7);
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitEndTurn' });
+  });
+
+  it('give no extra roll when doublesRollAgain is off', () => {
+    const rules = { ...defaultRules, doublesRollAgain: false };
+
+    const { state, events } = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 2), rules);
+
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events.some((e) => e.type === 'ROLL_AGAIN')).toBe(false);
+  });
+
+  it('send the Player straight to Jail without moving on the third in a row', () => {
+    let state = rollResolved(started(), 'ann', dice(1, 1)).state;
+    state = rollResolved(state, 'ann', dice(2, 2)).state;
+    expect(position(state, 'ann')).toBe(6);
+
+    const { state: next, events } = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 3));
+
+    expect(position(next, 'ann')).toBe(10);
+    expect(player(next, 'ann').inJail).toBe(true);
+    expect(next.turn).toMatchObject({ playerId: 'ann', step: 'awaitEndTurn' });
+    expect(events).toEqual([
+      { type: 'DICE_ROLLED', playerId: 'ann', dice: [3, 3], total: 6 },
+      { type: 'JAILED', playerId: 'ann', reason: 'doubles' },
+    ]);
+  });
+
+  it('reads the streak length from doublesToJail', () => {
+    const rules = { ...defaultRules, doublesToJail: 1 };
+
+    const { state } = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 2), rules);
+
+    expect(player(state, 'ann').inJail).toBe(true);
+    expect(position(state, 'ann')).toBe(10);
+  });
+
+  it('never send the Player to Jail when doublesToJail is 0', () => {
+    const rules = { ...defaultRules, doublesToJail: 0 };
+    let state = started(rules);
+    for (const [d1, d2] of [[1, 1], [2, 2], [3, 3], [1, 1]] as const) {
+      state = rollResolved(state, 'ann', dice(d1, d2), rules).state;
+    }
+
+    expect(player(state, 'ann').inJail).toBe(false);
+    expect(position(state, 'ann')).toBe(14);
+    expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+  });
+
+  it('start a new streak on each turn', () => {
+    let state = rollResolved(started(), 'ann', dice(1, 1)).state;
+    state = rollResolved(state, 'ann', dice(2, 2)).state;
+    state = rollResolved(state, 'ann', dice(1, 2)).state;
+    state = act(state, { type: 'END_TURN', playerId: 'ann' }).state;
+    state = playTurn(state, 'bob', dice(1, 2));
+
+    const { state: next } = rollResolved(state, 'ann', dice(1, 1));
+
+    expect(player(next, 'ann').inJail).toBe(false);
+    expect(next.turn?.step).toBe('awaitRoll');
+  });
+
+  describe('with 3 dice', () => {
+    const rules = { ...defaultRules, diceCount: 3 };
+
+    it('need all three faces to match', () => {
+      const { state } = rollResolved(started(rules), 'ann', dice(2, 2, 3), rules);
+
+      expect(state.turn?.step).toBe('awaitEndTurn');
+    });
+
+    it('count when all three match', () => {
+      const { state } = rollResolved(started(rules), 'ann', dice(2, 2, 2), rules);
+
+      expect(state.turn?.step).toBe('awaitRoll');
+    });
+  });
+
+  it('never happen with 1 die', () => {
+    const rules = { ...defaultRules, diceCount: 1, doublesToJail: 1 };
+
+    const { state } = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(4), rules);
+
+    expect(player(state, 'ann').inJail).toBe(false);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+  });
+});
+
+describe('Jail', () => {
+  /** ann is sent to Jail by the Go To Jail space; after bob's turn it is ann's turn again. */
+  function jailed(rules: Rules = defaultRules): GameState {
+    // Not Doubles for any dice count: all 1s but the last die, which shows 2.
+    const faces = Array.from({ length: rules.diceCount }, (_, i) => (i === rules.diceCount - 1 ? 2 : 1));
+    const total = faces.reduce((a, b) => a + b, 0);
+    let state = withPlayer(started(rules), 'ann', { position: 30 - total });
+    state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(...faces), rules).state;
+    state = act(state, { type: 'END_TURN', playerId: 'ann' }, noDice, rules).state;
+    state = rollResolved(state, 'bob', dice(...faces), rules).state;
+    return act(state, { type: 'END_TURN', playerId: 'bob' }, noDice, rules).state;
+  }
+
+  /** ann fails `count` rolls in Jail, with bob taking a turn after each. */
+  function failRolls(state: GameState, count: number): GameState {
+    for (let i = 0; i < count; i++) {
+      state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+      state = act(state, { type: 'END_TURN', playerId: 'ann' }).state;
+      state = playTurn(state, 'bob', dice(1, 2));
+    }
+    return state;
+  }
+
+  it('is entered from the Go To Jail space, with no GO salary, and the turn ends', () => {
+    const game = withPlayer(started(), 'ann', { position: 25 });
+
+    const { state, events } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 3));
+
+    expect(position(state, 'ann')).toBe(10);
+    expect(player(state, 'ann').inJail).toBe(true);
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([
+      { type: 'DICE_ROLLED', playerId: 'ann', dice: [2, 3], total: 5 },
+      { type: 'MOVED', playerId: 'ann', from: 25, to: 30 },
+      { type: 'JAILED', playerId: 'ann', reason: 'goToJail' },
+    ]);
+  });
+
+  it('ends the turn even when the Player rolled Doubles onto Go To Jail', () => {
+    const game = withPlayer(started(), 'ann', { position: 26 });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 2));
+
+    expect(player(state, 'ann').inJail).toBe(true);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+  });
+
+  it('keeps the Player in Jail after a failed roll', () => {
+    const { state, events } = act(jailed(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(position(state, 'ann')).toBe(10);
+    expect(player(state, 'ann').inJail).toBe(true);
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([
+      { type: 'DICE_ROLLED', playerId: 'ann', dice: [1, 2], total: 3 },
+      { type: 'STILL_IN_JAIL', playerId: 'ann', failedRolls: 1 },
+    ]);
+  });
+
+  describe('paying the fine', () => {
+    it('releases the Player before rolling, who then rolls and moves as usual', () => {
+      const { state, events } = act(jailed(), { type: 'PAY_JAIL_FINE', playerId: 'ann' });
+
+      expect(player(state, 'ann').cash).toBe(1400);
+      expect(player(state, 'ann').inJail).toBe(false);
+      expect(state.turn).toMatchObject({ playerId: 'ann', step: 'awaitRoll' });
+      expect(events).toEqual([
+        { type: 'JAIL_FINE_PAID', playerId: 'ann', amount: 100, forced: false },
+        { type: 'LEFT_JAIL', playerId: 'ann' },
+      ]);
+
+      const { state: moved } = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+      expect(position(moved, 'ann')).toBe(17);
+    });
+
+    it('then lets Doubles give an extra roll as usual', () => {
+      const paid = act(jailed(), { type: 'PAY_JAIL_FINE', playerId: 'ann' }).state;
+
+      // 10 + 10 lands on Free Parking
+      const { state } = act(paid, { type: 'ROLL_DICE', playerId: 'ann' }, dice(5, 5));
+
+      expect(state.turn?.step).toBe('awaitRoll');
+    });
+
+    it('reads the fine from the Rules', () => {
+      const rules = { ...defaultRules, jailFine: 30 };
+
+      const { state } = act(jailed(rules), { type: 'PAY_JAIL_FINE', playerId: 'ann' }, noDice, rules);
+
+      expect(player(state, 'ann').cash).toBe(1470);
+    });
+
+    it('feeds the Jackpot', () => {
+      const rules: Rules = { ...defaultRules, freeParkingMode: 'jackpot' };
+
+      const { state } = act(jailed(rules), { type: 'PAY_JAIL_FINE', playerId: 'ann' }, noDice, rules);
+
+      expect(state.bank.jackpot).toBe(100);
+    });
+
+    it('is refused when the Player is not in Jail', () => {
+      expect(() => act(started(), { type: 'PAY_JAIL_FINE', playerId: 'ann' })).toThrow(IllegalActionError);
+    });
+
+    it('is refused after the Player has rolled', () => {
+      const rolled = act(jailed(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+      expect(() => act(rolled, { type: 'PAY_JAIL_FINE', playerId: 'ann' })).toThrow(IllegalActionError);
+    });
+
+    it('is refused out of turn', () => {
+      const game = withPlayer(jailed(), 'bob', { inJail: true });
+
+      expect(() => act(game, { type: 'PAY_JAIL_FINE', playerId: 'bob' })).toThrow(IllegalActionError);
+    });
+
+    it('is refused when the Player cannot afford it', () => {
+      const game = withPlayer(jailed(), 'ann', { cash: 99 });
+
+      expect(() => act(game, { type: 'PAY_JAIL_FINE', playerId: 'ann' })).toThrow(IllegalActionError);
+    });
+  });
+
+  describe('rolling Doubles', () => {
+    it('releases the Player, who moves by that roll with no extra roll', () => {
+      // 10 + 10 lands on Free Parking
+      const { state, events } = act(jailed(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(5, 5));
+
+      expect(player(state, 'ann').inJail).toBe(false);
+      expect(player(state, 'ann').cash).toBe(1500);
+      expect(position(state, 'ann')).toBe(20);
+      expect(state.turn?.step).toBe('awaitEndTurn');
+      expect(events).toEqual([
+        { type: 'DICE_ROLLED', playerId: 'ann', dice: [5, 5], total: 10 },
+        { type: 'LEFT_JAIL', playerId: 'ann' },
+        { type: 'MOVED', playerId: 'ann', from: 10, to: 20 },
+      ]);
+    });
+
+    it('gives no extra roll after a buy decision either', () => {
+      // 10 + 6 lands on Orange 1
+      const landed = act(jailed(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 3)).state;
+
+      const { state } = act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' });
+
+      expect(state.turn?.step).toBe('awaitEndTurn');
+    });
+
+    it('needs all three faces to match with 3 dice', () => {
+      const rules = { ...defaultRules, diceCount: 3 };
+
+      const { state } = act(jailed(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 3, 4), rules);
+
+      expect(player(state, 'ann').inJail).toBe(true);
+    });
+
+    it('is impossible with 1 die', () => {
+      const rules = { ...defaultRules, diceCount: 1 };
+
+      const { state } = act(jailed(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(4), rules);
+
+      expect(player(state, 'ann').inJail).toBe(true);
+      expect(position(state, 'ann')).toBe(10);
+    });
+  });
+
+  describe('after the last allowed failed roll', () => {
+    it('forces the fine and moves the Player by that roll', () => {
+      const game = failRolls(jailed(), 2);
+
+      const { state, events } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+
+      expect(player(state, 'ann').inJail).toBe(false);
+      expect(player(state, 'ann').cash).toBe(1400);
+      expect(position(state, 'ann')).toBe(17);
+      expect(state.turn?.step).toBe('awaitEndTurn');
+      expect(events).toEqual([
+        { type: 'DICE_ROLLED', playerId: 'ann', dice: [3, 4], total: 7 },
+        { type: 'JAIL_FINE_PAID', playerId: 'ann', amount: 100, forced: true },
+        { type: 'LEFT_JAIL', playerId: 'ann' },
+        { type: 'MOVED', playerId: 'ann', from: 10, to: 17 },
+      ]);
+    });
+
+    it('reads the number of allowed rolls from maxJailTurns', () => {
+      const rules = { ...defaultRules, maxJailTurns: 1 };
+
+      const { state } = act(jailed(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4), rules);
+
+      expect(player(state, 'ann').inJail).toBe(false);
+      expect(position(state, 'ann')).toBe(17);
+    });
+
+    it('lets cash go negative when the Player cannot afford the forced fine', () => {
+      const game = withPlayer(failRolls(jailed(), 2), 'ann', { cash: 40 });
+
+      const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+
+      expect(player(state, 'ann').cash).toBe(-60);
+    });
+  });
+
+  it('starts the failed-roll count afresh on the next stay in Jail', () => {
+    // ann fails twice, pays out, then goes back to Jail from 25
+    let state = failRolls(jailed(), 2);
+    state = act(state, { type: 'PAY_JAIL_FINE', playerId: 'ann' }).state;
+    state = withPlayer(state, 'ann', { position: 25 });
+    state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 3)).state;
+    state = act(state, { type: 'END_TURN', playerId: 'ann' }).state;
+    state = playTurn(state, 'bob', dice(1, 2));
+
+    const { state: next } = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(player(next, 'ann').inJail).toBe(true);
+    expect(player(next, 'ann').cash).toBe(1400);
   });
 });

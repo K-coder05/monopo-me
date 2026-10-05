@@ -3,7 +3,14 @@ import type { Ack, ClientToServer, ServerToClient } from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
 
-export type Intent = 'START_GAME' | 'ROLL_DICE' | 'BUY_PROPERTY' | 'DECLINE_PROPERTY' | 'PASS_AUCTION' | 'END_TURN';
+export type Intent =
+  | 'START_GAME'
+  | 'ROLL_DICE'
+  | 'PAY_JAIL_FINE'
+  | 'BUY_PROPERTY'
+  | 'DECLINE_PROPERTY'
+  | 'PASS_AUCTION'
+  | 'END_TURN';
 
 /** Resolves with the server's error message, or null if it was accepted. */
 function toError(resolve: (error: string | null) => void): Ack {

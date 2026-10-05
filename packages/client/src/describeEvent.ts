@@ -22,6 +22,20 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} moved from ${space(event.from)} to ${space(event.to)}`;
     case 'GO_SALARY':
       return `${name(event.playerId)} collected ${event.amount} salary`;
+    case 'ROLL_AGAIN':
+      return `Doubles! ${name(event.playerId)} rolls again`;
+    case 'JAILED':
+      return event.reason === 'doubles'
+        ? `${name(event.playerId)} rolled too many Doubles in a row and went to Jail`
+        : `${name(event.playerId)} went to Jail`;
+    case 'STILL_IN_JAIL':
+      return `${name(event.playerId)} stays in Jail (failed roll ${event.failedRolls})`;
+    case 'JAIL_FINE_PAID':
+      return event.forced
+        ? `${name(event.playerId)} is out of rolls and must pay the ${event.amount} Jail fine`
+        : `${name(event.playerId)} paid the ${event.amount} Jail fine`;
+    case 'LEFT_JAIL':
+      return `${name(event.playerId)} is out of Jail`;
     case 'TAX_PAID':
       return `${name(event.playerId)} paid ${event.amount} for ${space(event.index)}`;
     case 'FREE_PARKING_PAID':

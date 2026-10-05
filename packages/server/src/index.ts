@@ -83,6 +83,7 @@ io.on('connection', (socket: GameSocket) => {
   for (const type of [
     'START_GAME',
     'ROLL_DICE',
+    'PAY_JAIL_FINE',
     'BUY_PROPERTY',
     'DECLINE_PROPERTY',
     'PASS_AUCTION',

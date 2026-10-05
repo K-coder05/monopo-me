@@ -37,6 +37,8 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
     game.board.filter((s) => game.deeds[s.index]?.ownerId === playerId);
   const myself = game.players.find((p) => p.id === me);
   const offered = myTurn && turn.step === 'awaitBuyDecision' ? game.board[myself?.position ?? 0] : undefined;
+  const canPayFine =
+    myTurn && turn.step === 'awaitRoll' && !!myself?.inJail && myself.cash >= game.rules.jailFine;
 
   return (
     <main className="game">
@@ -51,6 +53,11 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
                 {p.name}
                 {p.id === me && ' (you)'}
               </span>
+              {p.inJail && (
+                <span className="jailed" title={`Failed rolls: ${p.jailTurns} of ${game.rules.maxJailTurns}`}>
+                  In Jail
+                </span>
+              )}
               <span className="owned" title="Properties owned">
                 {ownedBy(p.id).length} owned
               </span>
@@ -62,6 +69,10 @@ export function Game({ game, me, clockOffset }: { game: GameState; me: string; c
         <div className="actions">
           <button disabled={!myTurn || turn.step !== 'awaitRoll'} onClick={() => act('ROLL_DICE')}>
             Roll
+          </button>
+          {/* The "use get-out-of-jail card" button joins this one in the cards ticket. */}
+          <button disabled={!canPayFine} onClick={() => act('PAY_JAIL_FINE')}>
+            Pay fine ({game.rules.jailFine})
           </button>
           <button disabled={!myTurn || turn.step !== 'awaitEndTurn'} onClick={() => act('END_TURN')}>
             End turn

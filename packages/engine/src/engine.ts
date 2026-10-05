@@ -4,6 +4,7 @@ import type {
   Auction,
   GameEvent,
   GameState,
+  JailReason,
   Player,
   Rng,
   RollOffRoll,
@@ -53,8 +54,11 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'ROLL_DICE':
       next = roll(state, action.playerId, rules, rng, events);
       break;
+    case 'PAY_JAIL_FINE':
+      next = payJailFine(state, action.playerId, rules, events);
+      break;
     case 'BUY_PROPERTY':
-      next = buy(state, action.playerId, events);
+      next = buy(state, action.playerId, rules, events);
       break;
     case 'DECLINE_PROPERTY':
       next = decline(state, action.playerId, rules, now, events);
@@ -63,10 +67,10 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
       next = placeBid(state, action.playerId, action.amount, rules, now, events);
       break;
     case 'PASS_AUCTION':
-      next = passAuction(state, action.playerId, events);
+      next = passAuction(state, action.playerId, rules, events);
       break;
     case 'EXPIRE_AUCTION':
-      next = expireAuction(state, now, events);
+      next = expireAuction(state, rules, now, events);
       break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
@@ -85,6 +89,7 @@ function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player
     cash: rules.startingCash,
     position: goIndex(board) ?? 0,
     inJail: false,
+    jailTurns: 0,
     hasPassedGo: false,
   };
 }
@@ -128,7 +133,7 @@ function start(state: GameState, playerId: string, rules: Rules, rng: Rng, event
     ...state,
     phase: 'playing',
     players,
-    turn: { playerId: first.id, step: 'awaitRoll', lastRoll: [], round: 1 },
+    turn: { playerId: first.id, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round: 1 },
   };
 }
 
@@ -145,10 +150,75 @@ function roll(state: GameState, playerId: string, rules: Rules, rng: Rng, events
   const turn = requireTurn(state, playerId, 'awaitRoll');
   const dice = rollDice(rules, rng);
   const total = sum(dice);
+  const doubles = isDoubles(dice);
   events.push({ type: 'DICE_ROLLED', playerId, dice, total });
 
-  const moved = moveForward(state, playerId, total, rules, events);
-  return land({ ...moved, turn: { ...turn, lastRoll: dice } }, playerId, rules, events);
+  let next: GameState = { ...state, turn: { ...turn, lastRoll: dice } };
+  const fromJail = findPlayer(state, playerId).inJail;
+  if (fromJail) {
+    next = rollInJail(next, playerId, doubles, rules, events);
+    if (findPlayer(next, playerId).inJail) return { ...next, turn: { ...next.turn!, step: 'awaitEndTurn' } };
+  }
+
+  // Doubles that get a Player out of Jail earn no extra roll.
+  const doublesCount = doubles && !fromJail ? turn.doublesCount + 1 : 0;
+  if (doublesCount > 0 && rules.doublesToJail > 0 && doublesCount >= rules.doublesToJail) {
+    return sendToJail(next, playerId, 'doubles', events);
+  }
+  next = { ...next, turn: { ...next.turn!, doublesCount } };
+  return land(moveForward(next, playerId, total, rules, events), playerId, rules, events);
+}
+
+/** Every die shows the same face; a single die never rolls Doubles. */
+function isDoubles(dice: number[]): boolean {
+  return dice.length > 1 && dice.every((d) => d === dice[0]);
+}
+
+/**
+ * A jailed Player's roll: Doubles release them; otherwise they stay, until the failure that
+ * reaches maxJailTurns forces the fine and releases them. Moving by the roll is up to the caller.
+ */
+function rollInJail(state: GameState, playerId: string, doubles: boolean, rules: Rules, events: GameEvent[]): GameState {
+  if (doubles) return releaseFromJail(state, playerId, events);
+  const failedRolls = findPlayer(state, playerId).jailTurns + 1;
+  if (failedRolls >= rules.maxJailTurns) {
+    return releaseFromJail(chargeJailFine(state, playerId, true, rules, events), playerId, events);
+  }
+  events.push({ type: 'STILL_IN_JAIL', playerId, failedRolls });
+  return updatePlayer(state, playerId, (p) => ({ ...p, jailTurns: failedRolls }));
+}
+
+function payJailFine(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  requireTurn(state, playerId, 'awaitRoll');
+  const player = findPlayer(state, playerId);
+  if (!player.inJail) throw new IllegalActionError('You are not in Jail');
+  if (player.cash < rules.jailFine) {
+    throw new IllegalActionError(`You need ${rules.jailFine} to pay the fine, but have ${player.cash}`);
+  }
+  return releaseFromJail(chargeJailFine(state, playerId, false, rules, events), playerId, events);
+}
+
+/** `forced` when the Player has used up their rolls; until Debts exist, a forced fine can take cash negative. */
+function chargeJailFine(state: GameState, playerId: string, forced: boolean, rules: Rules, events: GameEvent[]): GameState {
+  events.push({ type: 'JAIL_FINE_PAID', playerId, amount: rules.jailFine, forced });
+  return payBankFeedingJackpot(state, playerId, rules.jailFine, rules);
+}
+
+/**
+ * Moves the Player straight to the Jail space without passing GO, and ends their turn with no
+ * extra roll for any Doubles.
+ */
+function sendToJail(state: GameState, playerId: string, reason: JailReason, events: GameEvent[]): GameState {
+  events.push({ type: 'JAILED', playerId, reason });
+  const jail = state.board.find((s) => s.type === 'jail')?.index;
+  const jailed = updatePlayer(state, playerId, (p) => ({ ...p, position: jail ?? p.position, inJail: true, jailTurns: 0 }));
+  return { ...jailed, turn: { ...jailed.turn!, step: 'awaitEndTurn', doublesCount: 0 } };
+}
+
+/** Every way out of Jail ends here: the fine, Doubles, and (from the cards ticket) a get-out-of-jail card. */
+function releaseFromJail(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  events.push({ type: 'LEFT_JAIL', playerId });
+  return updatePlayer(state, playerId, (p) => ({ ...p, inJail: false, jailTurns: 0 }));
 }
 
 /**
@@ -178,26 +248,27 @@ function moveForward(state: GameState, playerId: string, steps: number, rules: R
 function land(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
   const player = findPlayer(state, playerId);
   const space = state.board[player.position]!;
-  const toEndTurn = (s: GameState): GameState => ({ ...s, turn: { ...s.turn!, step: 'awaitEndTurn' } });
+  const finishLanding = (s: GameState) => landingResolved(s, rules, events);
+  if (space.type === 'goToJail') return sendToJail(state, playerId, 'goToJail', events);
   if (space.type === 'tax') {
     const amount = space.taxAmount ?? 0;
     events.push({ type: 'TAX_PAID', playerId, index: space.index, amount });
-    return toEndTurn(payBankFeedingJackpot(state, playerId, amount, rules));
+    return finishLanding(payBankFeedingJackpot(state, playerId, amount, rules));
   }
-  if (space.type === 'freeParking') return toEndTurn(freeParking(state, playerId, rules, events));
-  if (!isProperty(space)) return toEndTurn(state);
+  if (space.type === 'freeParking') return finishLanding(freeParking(state, playerId, rules, events));
+  if (!isProperty(space)) return finishLanding(state);
 
   const deed = state.deeds[space.index];
   if (!deed) {
     if (rules.mustCompleteLapBeforeBuying && !player.hasPassedGo) {
       events.push({ type: 'PURCHASE_LOCKED', playerId, index: space.index });
-      return toEndTurn(state);
+      return finishLanding(state);
     }
     events.push({ type: 'PROPERTY_OFFERED', playerId, index: space.index, price: space.price ?? 0 });
     return { ...state, turn: { ...state.turn!, step: 'awaitBuyDecision' } };
   }
 
-  if (deed.ownerId === playerId) return toEndTurn(state);
+  if (deed.ownerId === playerId) return finishLanding(state);
   const waived = deed.mortgaged
     ? 'mortgaged'
     : findPlayer(state, deed.ownerId).inJail && !rules.collectRentInJail
@@ -205,13 +276,26 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
       : null;
   if (waived) {
     events.push({ type: 'RENT_WAIVED', playerId, ownerId: deed.ownerId, index: space.index, reason: waived });
-    return toEndTurn(state);
+    return finishLanding(state);
   }
 
   const amount = rentFor(state, space, deed.ownerId, rules);
   events.push({ type: 'RENT_PAID', playerId, ownerId: deed.ownerId, index: space.index, amount });
   // Until Debts exist, a Player who cannot cover the rent goes into negative cash.
-  return toEndTurn(adjustCash(adjustCash(state, playerId, -amount), deed.ownerId, amount));
+  return finishLanding(adjustCash(adjustCash(state, playerId, -amount), deed.ownerId, amount));
+}
+
+/**
+ * Called once the landing space is fully resolved (including any buy decision or Auction):
+ * the Player rolls again after Doubles when doublesRollAgain is on, otherwise may end their turn.
+ */
+function landingResolved(state: GameState, rules: Rules, events: GameEvent[]): GameState {
+  const turn = state.turn!;
+  if (turn.doublesCount > 0 && rules.doublesRollAgain && !findPlayer(state, turn.playerId).inJail) {
+    events.push({ type: 'ROLL_AGAIN', playerId: turn.playerId });
+    return { ...state, turn: { ...turn, step: 'awaitRoll' } };
+  }
+  return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
 }
 
 /**
@@ -271,7 +355,7 @@ function rentFor(state: GameState, space: SpaceDefinition, ownerId: string, rule
   }
 }
 
-function buy(state: GameState, playerId: string, events: GameEvent[]): GameState {
+function buy(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
   const turn = requireTurn(state, playerId, 'awaitBuyDecision');
   const player = findPlayer(state, playerId);
   const price = state.board[player.position]!.price ?? 0;
@@ -279,18 +363,15 @@ function buy(state: GameState, playerId: string, events: GameEvent[]): GameState
 
   events.push({ type: 'PROPERTY_BOUGHT', playerId, index: player.position, price });
   const paid = adjustCash(state, playerId, -price);
-  return {
-    ...paid,
-    deeds: { ...state.deeds, [player.position]: { ownerId: playerId, buildings: 0, mortgaged: false } },
-    turn: { ...turn, step: 'awaitEndTurn' },
-  };
+  const deeds = { ...state.deeds, [player.position]: { ownerId: playerId, buildings: 0, mortgaged: false } };
+  return landingResolved({ ...paid, deeds, turn }, rules, events);
 }
 
 function decline(state: GameState, playerId: string, rules: Rules, now: number, events: GameEvent[]): GameState {
   const turn = requireTurn(state, playerId, 'awaitBuyDecision');
   const index = findPlayer(state, playerId).position;
   events.push({ type: 'PROPERTY_DECLINED', playerId, index });
-  if (!rules.auctionOnDecline) return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
+  if (!rules.auctionOnDecline) return landingResolved(state, rules, events);
 
   const endsAt = countdownEnd(rules, now);
   events.push({ type: 'AUCTION_STARTED', index, endsAt });
@@ -337,44 +418,46 @@ function placeBid(
 
   const endsAt = countdownEnd(rules, now);
   events.push({ type: 'BID_PLACED', playerId, amount, endsAt });
-  return settleIfDecided({ ...state, auction: { ...auction, highBid: { playerId, amount }, endsAt } }, events);
+  return settleIfDecided({ ...state, auction: { ...auction, highBid: { playerId, amount }, endsAt } }, rules, events);
 }
 
-function passAuction(state: GameState, playerId: string, events: GameEvent[]): GameState {
+function passAuction(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
   const auction = requireBidder(state, playerId);
   if (auction.highBid?.playerId === playerId) throw new IllegalActionError('You cannot pass while you have the highest bid');
   events.push({ type: 'AUCTION_PASSED', playerId });
-  return settleIfDecided({ ...state, auction: { ...auction, bidders: auction.bidders.filter((id) => id !== playerId) } }, events);
+  const bidders = auction.bidders.filter((id) => id !== playerId);
+  return settleIfDecided({ ...state, auction: { ...auction, bidders } }, rules, events);
 }
 
-function expireAuction(state: GameState, now: number, events: GameEvent[]): GameState {
+function expireAuction(state: GameState, rules: Rules, now: number, events: GameEvent[]): GameState {
   const auction = requireAuction(state);
   if (now < auction.endsAt) throw new IllegalActionError('The Auction countdown has not run out');
-  return settleAuction(state, auction, events);
+  return settleAuction(state, auction, rules, events);
 }
 
 /**
  * Ends the Auction once nobody can change the result: everyone has passed, or the only
  * Player left holds the highest bid. A lone Player with no bid yet may still bid.
  */
-function settleIfDecided(state: GameState, events: GameEvent[]): GameState {
+function settleIfDecided(state: GameState, rules: Rules, events: GameEvent[]): GameState {
   const auction = state.auction!;
   const [last, ...others] = auction.bidders;
   const decided = last === undefined || (others.length === 0 && auction.highBid?.playerId === last);
-  return decided ? settleAuction(state, auction, events) : state;
+  return decided ? settleAuction(state, auction, rules, events) : state;
 }
 
 /** The highest bidder pays and takes the Deed; with no bids the property stays with the bank. */
-function settleAuction(state: GameState, { index, highBid }: Auction, events: GameEvent[]): GameState {
-  const closed: GameState = { ...state, auction: undefined, turn: { ...state.turn!, step: 'awaitEndTurn' } };
+function settleAuction(state: GameState, { index, highBid }: Auction, rules: Rules, events: GameEvent[]): GameState {
+  const closed: GameState = { ...state, auction: undefined };
   if (!highBid) {
     events.push({ type: 'AUCTION_UNSOLD', index });
-    return closed;
+    return landingResolved(closed, rules, events);
   }
   const { playerId, amount } = highBid;
   events.push({ type: 'AUCTION_WON', playerId, index, amount });
   const paid = adjustCash(closed, playerId, -amount);
-  return { ...paid, deeds: { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } } };
+  const deeds = { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } };
+  return landingResolved({ ...paid, deeds }, rules, events);
 }
 
 /** Streets, stations and utilities: the spaces that can have a Deed. */
@@ -410,7 +493,7 @@ function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameS
   const round = nextIndex === 0 ? turn.round + 1 : turn.round;
   const nextId = state.players[nextIndex]!.id;
   events.push({ type: 'TURN_STARTED', playerId: nextId, round });
-  return { ...state, turn: { playerId: nextId, step: 'awaitRoll', lastRoll: [], round } };
+  return { ...state, turn: { playerId: nextId, step: 'awaitRoll', doublesCount: 0, lastRoll: [], round } };
 }
 
 /**

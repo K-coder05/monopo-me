@@ -66,6 +66,8 @@ export type Player = {
   cash: number;
   position: number;
   inJail: boolean;
+  /** Failed rolls for Doubles during the current stay in Jail. */
+  jailTurns: number;
   /** For mustCompleteLapBeforeBuying. */
   hasPassedGo: boolean;
 };
@@ -90,9 +92,17 @@ export type Auction = {
 export type Turn = {
   playerId: string;
   step: TurnStep;
+  /**
+   * Doubles rolled in a row this turn that earn another roll. Rolling out of Jail with
+   * Doubles does not count, and going to Jail resets it.
+   */
+  doublesCount: number;
   lastRoll: number[];
   round: number;
 };
+
+/** How a Player was sent to Jail; cards add their own reason in the cards ticket. */
+export type JailReason = 'goToJail' | 'doubles';
 
 export type RollOffRoll = { playerId: string; dice: number[]; total: number };
 
@@ -105,6 +115,11 @@ export type GameEvent =
   | { type: 'DICE_ROLLED'; playerId: string; dice: number[]; total: number }
   | { type: 'MOVED'; playerId: string; from: number; to: number }
   | { type: 'GO_SALARY'; playerId: string; amount: number }
+  | { type: 'ROLL_AGAIN'; playerId: string }
+  | { type: 'JAILED'; playerId: string; reason: JailReason }
+  | { type: 'STILL_IN_JAIL'; playerId: string; failedRolls: number }
+  | { type: 'JAIL_FINE_PAID'; playerId: string; amount: number; forced: boolean }
+  | { type: 'LEFT_JAIL'; playerId: string }
   | { type: 'TAX_PAID'; playerId: string; index: number; amount: number }
   | { type: 'FREE_PARKING_PAID'; playerId: string; amount: number }
   | { type: 'JACKPOT_WON'; playerId: string; amount: number }
@@ -145,6 +160,7 @@ export type Action =
   | { type: 'JOIN_ROOM'; playerId: string; name: string; color: string }
   | { type: 'START_GAME'; playerId: string }
   | { type: 'ROLL_DICE'; playerId: string }
+  | { type: 'PAY_JAIL_FINE'; playerId: string }
   | { type: 'BUY_PROPERTY'; playerId: string }
   | { type: 'DECLINE_PROPERTY'; playerId: string }
   | { type: 'PLACE_BID'; playerId: string; amount: number }
