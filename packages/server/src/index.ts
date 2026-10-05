@@ -80,7 +80,7 @@ io.on('connection', (socket: GameSocket) => {
   );
 
   // Intents act for the Player bound to this connection; any playerId in the payload is ignored.
-  for (const type of ['START_GAME', 'ROLL_DICE', 'END_TURN'] as const) {
+  for (const type of ['START_GAME', 'ROLL_DICE', 'BUY_PROPERTY', 'DECLINE_PROPERTY', 'END_TURN'] as const) {
     socket.on(type, (_msg, ack) =>
       handle(ack, () => {
         const { roomCode, playerId } = requirePlayer(socket);

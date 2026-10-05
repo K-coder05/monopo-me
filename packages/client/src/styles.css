@@ -158,6 +158,11 @@ input {
 
 .space {
   position: relative;
+  font: inherit;
+  color: var(--fg);
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
   border: 1px solid var(--line);
   background: var(--space);
   display: flex;
@@ -174,6 +179,20 @@ input {
   height: 22%;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+}
+
+.space:hover {
+  background: white;
+}
+
+.space .owner {
+  position: absolute;
+  top: 0.3em;
+  right: 0.3em;
+  width: 1.2em;
+  height: 1.2em;
+  border-radius: 2px;
+  border: 1px solid var(--line);
 }
 
 .space .icon {
@@ -304,4 +323,107 @@ input {
 
 .log li + li {
   border-top: 1px solid #eee;
+}
+
+.strip .owned {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: normal;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+button.secondary {
+  background: white;
+  color: var(--fg);
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  color: var(--accent);
+  text-decoration: underline;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mine h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+.mine ul {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0 0 0 0.5rem;
+  border-left: 0.4rem solid #999;
+}
+
+/* Modals */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.4);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 10;
+}
+
+.modal {
+  background: white;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  width: min(22rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.modal h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.deed header {
+  margin: -1rem -1rem 0;
+  padding: 0.75rem 1rem;
+  border-bottom: 2px solid var(--line);
+  border-radius: 6px 6px 0 0;
+  text-align: center;
+}
+
+.deed table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.deed td {
+  padding: 0.2rem 0;
+}
+
+.deed td:last-child,
+.deed dd {
+  text-align: right;
+}
+
+.deed dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.2rem 1rem;
+  margin: 0;
+  border-top: 1px solid #ddd;
+  padding-top: 0.5rem;
+}
+
+.deed dd {
+  margin: 0;
 }

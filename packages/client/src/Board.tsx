@@ -1,17 +1,7 @@
 import type { GameState, SpaceDefinition } from '@landlord/engine';
+import { groupColor } from './spaces';
 
 const SIDE = 11;
-
-const GROUP_COLORS: Record<string, string> = {
-  brown: '#8b5a2b',
-  lightBlue: '#a8d8f0',
-  pink: '#d63a96',
-  orange: '#f39c12',
-  red: '#e02020',
-  yellow: '#f5e050',
-  green: '#1fa84f',
-  darkBlue: '#1f4fa8',
-};
 
 const ICONS: Partial<Record<SpaceDefinition['type'], string>> = {
   go: '➜',
@@ -34,23 +24,26 @@ function gridPosition(index: number): { row: number; col: number } {
   return { row: 1 + (index - 3 * n), col: SIDE };
 }
 
-export function Board({ game }: { game: GameState }) {
+export function Board({ game, onSelect }: { game: GameState; onSelect: (index: number) => void }) {
   return (
     <div className="board">
       {game.board.map((space) => {
         const { row, col } = gridPosition(space.index);
         const here = game.players.filter((p) => p.position === space.index);
         const corner = space.index % (SIDE - 1) === 0;
+        const deed = game.deeds[space.index];
+        const owner = deed && game.players.find((p) => p.id === deed.ownerId);
         return (
-          <div
+          <button
             key={space.index}
+            type="button"
             className={`space ${corner ? 'corner' : ''}`}
             style={{ gridRow: row, gridColumn: col }}
-            title={space.name}
+            title={owner ? `${space.name} (owned by ${owner.name})` : space.name}
+            onClick={() => onSelect(space.index)}
           >
-            {space.type === 'street' && (
-              <div className="bar" style={{ background: GROUP_COLORS[space.group ?? ''] ?? '#999' }} />
-            )}
+            {space.type === 'street' && <div className="bar" style={{ background: groupColor(space.group) }} />}
+            {owner && <div className="owner" style={{ background: owner.color }} aria-label={`Owned by ${owner.name}`} />}
             {ICONS[space.type] && <div className="icon">{ICONS[space.type]}</div>}
             <div className="name">{space.name}</div>
             {space.price !== undefined && <div className="price">{space.price}</div>}
@@ -62,7 +55,7 @@ export function Board({ game }: { game: GameState }) {
                 ))}
               </div>
             )}
-          </div>
+          </button>
         );
       })}
       <div className="centre">

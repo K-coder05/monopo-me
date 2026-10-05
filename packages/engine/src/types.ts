@@ -65,9 +65,15 @@ export type Player = {
   color: string;
   cash: number;
   position: number;
+  inJail: boolean;
+  /** For mustCompleteLapBeforeBuying. */
+  hasPassedGo: boolean;
 };
 
-export type TurnStep = 'awaitRoll' | 'awaitEndTurn';
+/** Live ownership state of one property, kept separate from its Space definition. */
+export type Deed = { ownerId: string; buildings: number; mortgaged: boolean };
+
+export type TurnStep = 'awaitRoll' | 'awaitBuyDecision' | 'awaitEndTurn';
 
 export type Turn = {
   playerId: string;
@@ -86,6 +92,12 @@ export type GameEvent =
   | { type: 'TURN_STARTED'; playerId: string; round: number }
   | { type: 'DICE_ROLLED'; playerId: string; dice: number[]; total: number }
   | { type: 'MOVED'; playerId: string; from: number; to: number }
+  | { type: 'PROPERTY_OFFERED'; playerId: string; index: number; price: number }
+  | { type: 'PURCHASE_LOCKED'; playerId: string; index: number }
+  | { type: 'PROPERTY_BOUGHT'; playerId: string; index: number; price: number }
+  | { type: 'PROPERTY_DECLINED'; playerId: string; index: number }
+  | { type: 'RENT_PAID'; playerId: string; ownerId: string; index: number; amount: number }
+  | { type: 'RENT_WAIVED'; playerId: string; ownerId: string; index: number; reason: 'mortgaged' | 'ownerInJail' }
   | { type: 'TURN_ENDED'; playerId: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
@@ -98,6 +110,8 @@ export type GameState = {
   board: SpaceDefinition[];
   /** In turn order once the game has started; join order in the lobby. */
   players: Player[];
+  /** Keyed by space index; a property with no Deed belongs to the bank. */
+  deeds: Record<number, Deed>;
   turn?: Turn;
   log: LogEntry[];
 };
@@ -106,6 +120,8 @@ export type Action =
   | { type: 'JOIN_ROOM'; playerId: string; name: string; color: string }
   | { type: 'START_GAME'; playerId: string }
   | { type: 'ROLL_DICE'; playerId: string }
+  | { type: 'BUY_PROPERTY'; playerId: string }
+  | { type: 'DECLINE_PROPERTY'; playerId: string }
   | { type: 'END_TURN'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */

@@ -6,7 +6,9 @@ import {
   defaultRules,
   IllegalActionError,
   type Action,
+  type Deed,
   type GameState,
+  type Player,
   type Rng,
   type Rules,
 } from './index';
@@ -101,6 +103,13 @@ function position(state: GameState, playerId: string) {
   return state.players.find((p) => p.id === playerId)!.position;
 }
 
+/** Rolls, declines any property offered, and ends the turn. */
+function playTurn(state: GameState, playerId: string, rng: Rng): GameState {
+  let next = act(state, { type: 'ROLL_DICE', playerId }, rng).state;
+  if (next.turn?.step === 'awaitBuyDecision') next = act(next, { type: 'DECLINE_PROPERTY', playerId }).state;
+  return act(next, { type: 'END_TURN', playerId }).state;
+}
+
 describe('rolling and moving', () => {
   it('moves the active Player clockwise by the dice total', () => {
     const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
@@ -118,10 +127,8 @@ describe('rolling and moving', () => {
     let state = started();
     // ann: 0 → 12 → 24 → 36, bob rolls in between
     for (let i = 0; i < 3; i++) {
-      state = act(state, { type: 'ROLL_DICE', playerId: 'ann' }, dice(6, 6)).state;
-      state = act(state, { type: 'END_TURN', playerId: 'ann' }).state;
-      state = act(state, { type: 'ROLL_DICE', playerId: 'bob' }, dice(1, 2)).state;
-      state = act(state, { type: 'END_TURN', playerId: 'bob' }).state;
+      state = playTurn(state, 'ann', dice(6, 6));
+      state = playTurn(state, 'bob', dice(1, 2));
     }
     expect(position(state, 'ann')).toBe(36);
 
@@ -166,8 +173,7 @@ describe('turn order', () => {
     for (let i = 0; i < 4; i++) {
       const { playerId, round } = state.turn!;
       seen.push([playerId, round]);
-      state = act(state, { type: 'ROLL_DICE', playerId }, dice(1, 2)).state;
-      state = act(state, { type: 'END_TURN', playerId }).state;
+      state = playTurn(state, playerId, dice(1, 2));
     }
 
     expect(seen).toEqual([
@@ -191,7 +197,7 @@ describe('turn order', () => {
 
 describe('game log', () => {
   it('records every event in order', () => {
-    const state = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 3)).state;
+    const state = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4)).state;
 
     const types = state.log.map((e) => e.event.type);
     expect(types).toEqual([
@@ -270,5 +276,239 @@ describe('starting the game', () => {
     expect(() => act(state, { type: 'JOIN_ROOM', playerId: 'cat', name: 'cat', color: 'green' })).toThrow(
       IllegalActionError,
     );
+  });
+});
+
+function player(state: GameState, playerId: string): Player {
+  return state.players.find((p) => p.id === playerId)!;
+}
+
+function withPlayer(state: GameState, playerId: string, patch: Partial<Player>): GameState {
+  return { ...state, players: state.players.map((p) => (p.id === playerId ? { ...p, ...patch } : p)) };
+}
+
+/** Gives `ownerId` unimproved, unmortgaged Deeds for the given space indexes. */
+function owning(state: GameState, ownerId: string, indexes: number[], patch: Partial<Deed> = {}): GameState {
+  const deeds = { ...state.deeds };
+  for (const index of indexes) deeds[index] = { ownerId, buildings: 0, mortgaged: false, ...patch };
+  return { ...state, deeds };
+}
+
+describe('buying property', () => {
+  it('offers an unowned property at its List price when the Player lands on it', () => {
+    const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(state.turn?.step).toBe('awaitBuyDecision');
+    expect(events).toContainEqual({ type: 'PROPERTY_OFFERED', playerId: 'ann', index: 3, price: 60 });
+  });
+
+  it.each([
+    ['a station', 2, 3, 5],
+    ['a utility', 6, 6, 12],
+  ])('offers %s too', (_, d1, d2, index) => {
+    const { state } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(d1, d2));
+
+    expect(state.turn?.step).toBe('awaitBuyDecision');
+    expect(position(state, 'ann')).toBe(index);
+  });
+
+  it('deducts the List price and creates the Deed when the Player buys', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    const { state, events } = act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' });
+
+    expect(player(state, 'ann').cash).toBe(1440);
+    expect(state.deeds[3]).toEqual({ ownerId: 'ann', buildings: 0, mortgaged: false });
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([{ type: 'PROPERTY_BOUGHT', playerId: 'ann', index: 3, price: 60 }]);
+  });
+
+  it('charges the current List price from the Board', () => {
+    const game = started();
+    const board = game.board.map((s) => (s.index === 3 ? { ...s, price: 75 } : s));
+    const landed = act({ ...game, board }, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    const { state } = act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' });
+
+    expect(player(state, 'ann').cash).toBe(1425);
+  });
+
+  it('ends the decision without a Deed when the Player declines', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    const { state, events } = act(landed, { type: 'DECLINE_PROPERTY', playerId: 'ann' });
+
+    expect(state.deeds[3]).toBeUndefined();
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toEqual([{ type: 'PROPERTY_DECLINED', playerId: 'ann', index: 3 }]);
+  });
+
+  it('does not let the Player end their turn while the buy decision is open', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    expect(() => act(landed, { type: 'END_TURN', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('does not let another Player buy or decline', () => {
+    const landed = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    expect(() => act(landed, { type: 'BUY_PROPERTY', playerId: 'bob' })).toThrow(IllegalActionError);
+    expect(() => act(landed, { type: 'DECLINE_PROPERTY', playerId: 'bob' })).toThrow(IllegalActionError);
+  });
+
+  it('does not offer anything on a space that is not a property', () => {
+    const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events.map((e) => e.type)).toEqual(['DICE_ROLLED', 'MOVED']);
+    expect(() => act(state, { type: 'BUY_PROPERTY', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+
+  it('does nothing when the Player lands on their own property', () => {
+    const { state, events } = act(owning(started(), 'ann', [3]), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(events.map((e) => e.type)).toEqual(['DICE_ROLLED', 'MOVED']);
+  });
+
+  it('refuses the purchase when the Player cannot afford it', () => {
+    const poor = withPlayer(started(), 'ann', { cash: 59 });
+    const landed = act(poor, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2)).state;
+
+    expect(() => act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' })).toThrow(IllegalActionError);
+  });
+});
+
+describe('rent', () => {
+  /** ann rolls onto `index` (from GO) with bob owning `owned`; returns the result. */
+  function landOn(owned: number[], roll: [number, number], rules: Rules = defaultRules, patch: Partial<Deed> = {}) {
+    return act(owning(started(rules), 'bob', owned, patch), { type: 'ROLL_DICE', playerId: 'ann' }, dice(...roll), rules);
+  }
+
+  it('charges base rent on a street', () => {
+    const { state, events } = landOn([3], [1, 2]);
+
+    expect(player(state, 'ann').cash).toBe(1496);
+    expect(player(state, 'bob').cash).toBe(1504);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toContainEqual({ type: 'RENT_PAID', playerId: 'ann', ownerId: 'bob', index: 3, amount: 4 });
+  });
+
+  it('multiplies base rent when the owner holds the whole Colour group', () => {
+    const { state } = landOn([1, 3], [1, 2]);
+
+    expect(player(state, 'ann').cash).toBe(1492);
+  });
+
+  it('reads the Colour group multiplier from the Rules', () => {
+    const { state } = landOn([1, 3], [1, 2], { ...defaultRules, colourGroupRentMultiplier: 3 });
+
+    expect(player(state, 'ann').cash).toBe(1488);
+  });
+
+  it('does not multiply when the owner holds only part of the Colour group', () => {
+    const { state } = landOn([6, 8], [4, 4]);
+
+    expect(player(state, 'ann').cash).toBe(1494);
+  });
+
+  it.each([
+    [[5], 25],
+    [[5, 15], 50],
+    [[5, 15, 25], 100],
+    [[5, 15, 25, 35], 200],
+  ])('charges station rent by stations owned (%j → %i)', (owned, rent) => {
+    const { state } = landOn(owned, [2, 3]);
+
+    expect(player(state, 'ann').cash).toBe(1500 - rent);
+  });
+
+  it('reads station rents from the Rules', () => {
+    const { state } = landOn([5, 15], [2, 3], { ...defaultRules, stationRents: [10, 30, 60, 90] });
+
+    expect(player(state, 'ann').cash).toBe(1470);
+  });
+
+  it.each([
+    [[12], 4 * 12],
+    [[12, 28], 10 * 12],
+  ])('charges utility rent as a multiple of the dice total (%j → %i)', (owned, rent) => {
+    const { state } = landOn(owned, [6, 6]);
+
+    expect(player(state, 'ann').cash).toBe(1500 - rent);
+  });
+
+  it('reads utility multipliers from the Rules', () => {
+    const { state } = landOn([12], [6, 6], { ...defaultRules, utilityMultipliers: [7, 20] });
+
+    expect(player(state, 'ann').cash).toBe(1500 - 7 * 12);
+  });
+
+  it('charges nothing on a mortgaged property', () => {
+    const { state, events } = landOn([3], [1, 2], defaultRules, { mortgaged: true });
+
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(events).toContainEqual({ type: 'RENT_WAIVED', playerId: 'ann', ownerId: 'bob', index: 3, reason: 'mortgaged' });
+  });
+
+  it('does not count mortgaged stations', () => {
+    const game = owning(owning(started(), 'bob', [5]), 'bob', [15], { mortgaged: true });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 3));
+
+    expect(player(state, 'ann').cash).toBe(1475);
+  });
+
+  it('charges nothing when the owner is in Jail, by default', () => {
+    const game = withPlayer(owning(started(), 'bob', [3]), 'bob', { inJail: true });
+
+    const { state, events } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2));
+
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(player(state, 'bob').cash).toBe(1500);
+    expect(events).toContainEqual({ type: 'RENT_WAIVED', playerId: 'ann', ownerId: 'bob', index: 3, reason: 'ownerInJail' });
+  });
+
+  it('charges rent to a jailed owner when collectRentInJail is on', () => {
+    const rules = { ...defaultRules, collectRentInJail: true };
+    const game = withPlayer(owning(started(rules), 'bob', [3]), 'bob', { inJail: true });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+    expect(player(state, 'ann').cash).toBe(1496);
+    expect(player(state, 'bob').cash).toBe(1504);
+  });
+});
+
+describe('mustCompleteLapBeforeBuying', () => {
+  const rules = { ...defaultRules, mustCompleteLapBeforeBuying: true };
+
+  it('offers nothing on an unowned property before the first pass of GO', () => {
+    const { state, events } = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toContainEqual({ type: 'PURCHASE_LOCKED', playerId: 'ann', index: 3 });
+    expect(events.some((e) => e.type === 'PROPERTY_OFFERED')).toBe(false);
+    expect(() => act(state, { type: 'BUY_PROPERTY', playerId: 'ann' }, noDice, rules)).toThrow(IllegalActionError);
+  });
+
+  it('offers the property once the Player has passed GO', () => {
+    const game = withPlayer(started(rules), 'ann', { position: 36 });
+
+    // 36 + 7 wraps round to 3
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4), rules);
+
+    expect(player(state, 'ann').hasPassedGo).toBe(true);
+    expect(state.turn?.step).toBe('awaitBuyDecision');
+  });
+
+  it('still charges rent before the first pass of GO', () => {
+    const game = owning(started(rules), 'bob', [3]);
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+    expect(player(state, 'ann').cash).toBe(1496);
   });
 });

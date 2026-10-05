@@ -12,6 +12,8 @@ export type ClientToServer = {
   // Intents carry no playerId: the server acts for the Player bound to the sending connection.
   START_GAME: (msg: object, ack: Ack) => void;
   ROLL_DICE: (msg: object, ack: Ack) => void;
+  BUY_PROPERTY: (msg: object, ack: Ack) => void;
+  DECLINE_PROPERTY: (msg: object, ack: Ack) => void;
   END_TURN: (msg: object, ack: Ack) => void;
 };
 

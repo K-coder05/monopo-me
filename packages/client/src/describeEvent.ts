@@ -20,6 +20,20 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} rolled ${event.dice.join(' + ')} = ${event.total}`;
     case 'MOVED':
       return `${name(event.playerId)} moved from ${space(event.from)} to ${space(event.to)}`;
+    case 'PROPERTY_OFFERED':
+      return `${name(event.playerId)} may buy ${space(event.index)} for ${event.price}`;
+    case 'PURCHASE_LOCKED':
+      return `${name(event.playerId)} cannot buy ${space(event.index)} before passing GO`;
+    case 'PROPERTY_BOUGHT':
+      return `${name(event.playerId)} bought ${space(event.index)} for ${event.price}`;
+    case 'PROPERTY_DECLINED':
+      return `${name(event.playerId)} declined ${space(event.index)}`;
+    case 'RENT_PAID':
+      return `${name(event.playerId)} paid ${event.amount} rent to ${name(event.ownerId)} for ${space(event.index)}`;
+    case 'RENT_WAIVED':
+      return event.reason === 'mortgaged'
+        ? `No rent: ${space(event.index)} is mortgaged`
+        : `No rent: ${name(event.ownerId)} is in Jail`;
     case 'TURN_ENDED':
       return `${name(event.playerId)} ended their turn`;
   }

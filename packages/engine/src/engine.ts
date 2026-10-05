@@ -31,6 +31,7 @@ export function createGame(
     rules,
     board,
     players: [newPlayer(host, rules, board)],
+    deeds: {},
     log: [],
   };
   return appendLog(state, [{ type: 'PLAYER_JOINED', playerId: host.id }]);
@@ -49,6 +50,12 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'ROLL_DICE':
       next = roll(state, action.playerId, rules, rng, events);
       break;
+    case 'BUY_PROPERTY':
+      next = buy(state, action.playerId, events);
+      break;
+    case 'DECLINE_PROPERTY':
+      next = decline(state, action.playerId, events);
+      break;
     case 'END_TURN':
       next = endTurn(state, action.playerId, events);
       break;
@@ -60,7 +67,15 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
 
 function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player {
   const go = board.find((s) => s.type === 'go');
-  return { id: p.id, name: p.name, color: p.color, cash: rules.startingCash, position: go?.index ?? 0 };
+  return {
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    cash: rules.startingCash,
+    position: go?.index ?? 0,
+    inJail: false,
+    hasPassedGo: false,
+  };
 }
 
 function join(
@@ -121,13 +136,110 @@ function roll(state: GameState, playerId: string, rules: Rules, rng: Rng, events
   const total = sum(dice);
   events.push({ type: 'DICE_ROLLED', playerId, dice, total });
 
-  const players = state.players.map((p) => {
-    if (p.id !== playerId) return p;
+  const moved = updatePlayer(state, playerId, (p) => {
     const to = (p.position + total) % state.board.length;
     events.push({ type: 'MOVED', playerId, from: p.position, to });
-    return { ...p, position: to };
+    return { ...p, position: to, hasPassedGo: p.hasPassedGo || p.position + total >= state.board.length };
   });
-  return { ...state, players, turn: { ...turn, step: 'awaitEndTurn', lastRoll: dice } };
+  return land({ ...moved, turn: { ...turn, lastRoll: dice } }, playerId, rules, events);
+}
+
+/** Resolves the space `playerId` is standing on and sets the next turn step. */
+function land(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  const player = findPlayer(state, playerId);
+  const space = state.board[player.position]!;
+  const toEndTurn = (s: GameState): GameState => ({ ...s, turn: { ...s.turn!, step: 'awaitEndTurn' } });
+  if (!isProperty(space)) return toEndTurn(state);
+
+  const deed = state.deeds[space.index];
+  if (!deed) {
+    if (rules.mustCompleteLapBeforeBuying && !player.hasPassedGo) {
+      events.push({ type: 'PURCHASE_LOCKED', playerId, index: space.index });
+      return toEndTurn(state);
+    }
+    events.push({ type: 'PROPERTY_OFFERED', playerId, index: space.index, price: space.price ?? 0 });
+    return { ...state, turn: { ...state.turn!, step: 'awaitBuyDecision' } };
+  }
+
+  if (deed.ownerId === playerId) return toEndTurn(state);
+  const waived = deed.mortgaged
+    ? 'mortgaged'
+    : findPlayer(state, deed.ownerId).inJail && !rules.collectRentInJail
+      ? 'ownerInJail'
+      : null;
+  if (waived) {
+    events.push({ type: 'RENT_WAIVED', playerId, ownerId: deed.ownerId, index: space.index, reason: waived });
+    return toEndTurn(state);
+  }
+
+  const amount = rentFor(state, space, deed.ownerId, rules);
+  events.push({ type: 'RENT_PAID', playerId, ownerId: deed.ownerId, index: space.index, amount });
+  // Until Debts exist, a Player who cannot cover the rent goes into negative cash.
+  const paid = updatePlayer(state, playerId, (p) => ({ ...p, cash: p.cash - amount }));
+  return toEndTurn(updatePlayer(paid, deed.ownerId, (p) => ({ ...p, cash: p.cash + amount })));
+}
+
+/** Rent `ownerId` charges on an unimproved property, from the current Rules and Board. */
+function rentFor(state: GameState, space: SpaceDefinition, ownerId: string, rules: Rules): number {
+  const ownedUnmortgaged = (type: SpaceDefinition['type']) =>
+    state.board.filter((s) => {
+      const deed = state.deeds[s.index];
+      return s.type === type && deed?.ownerId === ownerId && !deed.mortgaged;
+    }).length;
+  // The nth entry of a per-count list; owning more than the list covers uses its last entry.
+  const byCount = (list: number[], count: number) => list[Math.min(count, list.length) - 1] ?? 0;
+
+  switch (space.type) {
+    case 'street': {
+      const base = space.rents?.[0] ?? 0;
+      const group = state.board.filter((s) => s.type === 'street' && s.group === space.group);
+      const holdsGroup = space.group !== undefined && group.every((s) => state.deeds[s.index]?.ownerId === ownerId);
+      // A payer's share rounds up.
+      return holdsGroup ? Math.ceil(base * rules.colourGroupRentMultiplier) : base;
+    }
+    case 'station':
+      return byCount(rules.stationRents, ownedUnmortgaged('station'));
+    case 'utility':
+      return Math.ceil(byCount(rules.utilityMultipliers, ownedUnmortgaged('utility')) * sum(state.turn!.lastRoll));
+    default:
+      return 0;
+  }
+}
+
+function buy(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  const turn = requireTurn(state, playerId, 'awaitBuyDecision');
+  const player = findPlayer(state, playerId);
+  const price = state.board[player.position]!.price ?? 0;
+  if (player.cash < price) throw new IllegalActionError(`You need ${price} to buy this, but have ${player.cash}`);
+
+  events.push({ type: 'PROPERTY_BOUGHT', playerId, index: player.position, price });
+  const paid = updatePlayer(state, playerId, (p) => ({ ...p, cash: p.cash - price }));
+  return {
+    ...paid,
+    deeds: { ...state.deeds, [player.position]: { ownerId: playerId, buildings: 0, mortgaged: false } },
+    turn: { ...turn, step: 'awaitEndTurn' },
+  };
+}
+
+function decline(state: GameState, playerId: string, events: GameEvent[]): GameState {
+  const turn = requireTurn(state, playerId, 'awaitBuyDecision');
+  events.push({ type: 'PROPERTY_DECLINED', playerId, index: findPlayer(state, playerId).position });
+  return { ...state, turn: { ...turn, step: 'awaitEndTurn' } };
+}
+
+/** Streets, stations and utilities: the spaces that can have a Deed. */
+export function isProperty(space: SpaceDefinition): boolean {
+  return space.type === 'street' || space.type === 'station' || space.type === 'utility';
+}
+
+function findPlayer(state: GameState, playerId: string): Player {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player) throw new IllegalActionError('No such Player in this Room');
+  return player;
+}
+
+function updatePlayer(state: GameState, playerId: string, fn: (p: Player) => Player): GameState {
+  return { ...state, players: state.players.map((p) => (p.id === playerId ? fn(p) : p)) };
 }
 
 function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameState {
