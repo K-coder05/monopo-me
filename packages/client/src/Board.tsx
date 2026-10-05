@@ -60,6 +60,7 @@ export function Board({ game, onSelect }: { game: GameState; onSelect: (index: n
       })}
       <div className="centre">
         <div className="title">Landlord</div>
+        {game.rules.freeParkingMode === 'jackpot' && <div className="jackpot">Jackpot: {game.bank.jackpot}</div>}
         {game.turn && game.turn.lastRoll.length > 0 && (
           <div className="dice">
             {game.turn.lastRoll.map((d, i) => (

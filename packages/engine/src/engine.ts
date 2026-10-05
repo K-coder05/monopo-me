@@ -33,6 +33,7 @@ export function createGame(
     board,
     players: [newPlayer(host, rules, board)],
     deeds: {},
+    bank: { jackpot: 0 },
     log: [],
   };
   return appendLog(state, [{ type: 'PLAYER_JOINED', playerId: host.id }]);
@@ -77,13 +78,12 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
 }
 
 function newPlayer(p: NewPlayer, rules: Rules, board: SpaceDefinition[]): Player {
-  const go = board.find((s) => s.type === 'go');
   return {
     id: p.id,
     name: p.name,
     color: p.color,
     cash: rules.startingCash,
-    position: go?.index ?? 0,
+    position: goIndex(board) ?? 0,
     inJail: false,
     hasPassedGo: false,
   };
@@ -147,12 +147,31 @@ function roll(state: GameState, playerId: string, rules: Rules, rng: Rng, events
   const total = sum(dice);
   events.push({ type: 'DICE_ROLLED', playerId, dice, total });
 
-  const moved = updatePlayer(state, playerId, (p) => {
-    const to = (p.position + total) % state.board.length;
-    events.push({ type: 'MOVED', playerId, from: p.position, to });
-    return { ...p, position: to, hasPassedGo: p.hasPassedGo || p.position + total >= state.board.length };
-  });
+  const moved = moveForward(state, playerId, total, rules, events);
   return land({ ...moved, turn: { ...turn, lastRoll: dice } }, playerId, rules, events);
+}
+
+/**
+ * Moves `playerId` `steps` spaces clockwise, paying goSalary each time they land on or pass GO.
+ * A move that ends on GO pays double when doubleSalaryOnExactGo is on.
+ */
+function moveForward(state: GameState, playerId: string, steps: number, rules: Rules, events: GameEvent[]): GameState {
+  const size = state.board.length;
+  const go = goIndex(state.board);
+  const from = findPlayer(state, playerId).position;
+  const to = (from + steps) % size;
+  events.push({ type: 'MOVED', playerId, from, to });
+
+  const laps = go === undefined ? 0 : Math.floor((((from - go + size) % size) + steps) / size);
+  const exactBonus = laps > 0 && to === go && rules.doubleSalaryOnExactGo ? 1 : 0;
+  const salary = (laps + exactBonus) * rules.goSalary;
+  if (salary > 0) events.push({ type: 'GO_SALARY', playerId, amount: salary });
+  return updatePlayer(state, playerId, (p) => ({
+    ...p,
+    position: to,
+    cash: p.cash + salary,
+    hasPassedGo: p.hasPassedGo || laps > 0,
+  }));
 }
 
 /** Resolves the space `playerId` is standing on and sets the next turn step. */
@@ -160,6 +179,12 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
   const player = findPlayer(state, playerId);
   const space = state.board[player.position]!;
   const toEndTurn = (s: GameState): GameState => ({ ...s, turn: { ...s.turn!, step: 'awaitEndTurn' } });
+  if (space.type === 'tax') {
+    const amount = space.taxAmount ?? 0;
+    events.push({ type: 'TAX_PAID', playerId, index: space.index, amount });
+    return toEndTurn(payBankFeedingJackpot(state, playerId, amount, rules));
+  }
+  if (space.type === 'freeParking') return toEndTurn(freeParking(state, playerId, rules, events));
   if (!isProperty(space)) return toEndTurn(state);
 
   const deed = state.deeds[space.index];
@@ -186,8 +211,37 @@ function land(state: GameState, playerId: string, rules: Rules, events: GameEven
   const amount = rentFor(state, space, deed.ownerId, rules);
   events.push({ type: 'RENT_PAID', playerId, ownerId: deed.ownerId, index: space.index, amount });
   // Until Debts exist, a Player who cannot cover the rent goes into negative cash.
-  const paid = updatePlayer(state, playerId, (p) => ({ ...p, cash: p.cash - amount }));
-  return toEndTurn(updatePlayer(paid, deed.ownerId, (p) => ({ ...p, cash: p.cash + amount })));
+  return toEndTurn(adjustCash(adjustCash(state, playerId, -amount), deed.ownerId, amount));
+}
+
+/**
+ * A payment to the bank of the kind that feeds the Jackpot: tax, jail fines and card Transfers
+ * to the bank. Purchases, building costs and unmortgage interest must not use this.
+ * Until Debts exist, a Player who cannot cover it goes into negative cash.
+ */
+function payBankFeedingJackpot(state: GameState, playerId: string, amount: number, rules: Rules): GameState {
+  const paid = adjustCash(state, playerId, -amount);
+  if (rules.freeParkingMode !== 'jackpot') return paid;
+  return { ...paid, bank: { ...paid.bank, jackpot: paid.bank.jackpot + amount } };
+}
+
+function freeParking(state: GameState, playerId: string, rules: Rules, events: GameEvent[]): GameState {
+  switch (rules.freeParkingMode) {
+    case 'fixed': {
+      const amount = rules.freeParkingAmount;
+      if (amount <= 0) return state;
+      events.push({ type: 'FREE_PARKING_PAID', playerId, amount });
+      return adjustCash(state, playerId, amount);
+    }
+    case 'jackpot': {
+      const amount = state.bank.jackpot;
+      if (amount <= 0) return state;
+      events.push({ type: 'JACKPOT_WON', playerId, amount });
+      return { ...adjustCash(state, playerId, amount), bank: { ...state.bank, jackpot: 0 } };
+    }
+    default:
+      return state;
+  }
 }
 
 /** Rent `ownerId` charges on an unimproved property, from the current Rules and Board. */
@@ -224,7 +278,7 @@ function buy(state: GameState, playerId: string, events: GameEvent[]): GameState
   if (player.cash < price) throw new IllegalActionError(`You need ${price} to buy this, but have ${player.cash}`);
 
   events.push({ type: 'PROPERTY_BOUGHT', playerId, index: player.position, price });
-  const paid = updatePlayer(state, playerId, (p) => ({ ...p, cash: p.cash - price }));
+  const paid = adjustCash(state, playerId, -price);
   return {
     ...paid,
     deeds: { ...state.deeds, [player.position]: { ownerId: playerId, buildings: 0, mortgaged: false } },
@@ -319,7 +373,7 @@ function settleAuction(state: GameState, { index, highBid }: Auction, events: Ga
   }
   const { playerId, amount } = highBid;
   events.push({ type: 'AUCTION_WON', playerId, index, amount });
-  const paid = updatePlayer(closed, playerId, (p) => ({ ...p, cash: p.cash - amount }));
+  const paid = adjustCash(closed, playerId, -amount);
   return { ...paid, deeds: { ...paid.deeds, [index]: { ownerId: playerId, buildings: 0, mortgaged: false } } };
 }
 
@@ -336,6 +390,15 @@ function findPlayer(state: GameState, playerId: string): Player {
 
 function updatePlayer(state: GameState, playerId: string, fn: (p: Player) => Player): GameState {
   return { ...state, players: state.players.map((p) => (p.id === playerId ? fn(p) : p)) };
+}
+
+/** Adds `delta` (negative to charge) to a Player's cash. */
+function adjustCash(state: GameState, playerId: string, delta: number): GameState {
+  return updatePlayer(state, playerId, (p) => ({ ...p, cash: p.cash + delta }));
+}
+
+function goIndex(board: SpaceDefinition[]): number | undefined {
+  return board.find((s) => s.type === 'go')?.index;
 }
 
 function endTurn(state: GameState, playerId: string, events: GameEvent[]): GameState {

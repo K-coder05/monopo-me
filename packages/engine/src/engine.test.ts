@@ -515,6 +515,210 @@ describe('mustCompleteLapBeforeBuying', () => {
   });
 });
 
+describe('GO salary', () => {
+  /** ann rolls `roll` from `from`; returns the result. */
+  function rollFrom(from: number, roll: number[], rules: Rules = defaultRules) {
+    return act(withPlayer(started(rules), 'ann', { position: from }), { type: 'ROLL_DICE', playerId: 'ann' }, dice(...roll), rules);
+  }
+
+  it('pays goSalary when the Player passes GO', () => {
+    // 36 + 7 wraps round to 3
+    const { state, events } = rollFrom(36, [3, 4]);
+
+    expect(player(state, 'ann').cash).toBe(1700);
+    expect(events).toContainEqual({ type: 'GO_SALARY', playerId: 'ann', amount: 200 });
+  });
+
+  it('pays goSalary when the Player lands exactly on GO', () => {
+    const { state, events } = rollFrom(36, [2, 2]);
+
+    expect(position(state, 'ann')).toBe(0);
+    expect(player(state, 'ann').cash).toBe(1700);
+    expect(events).toContainEqual({ type: 'GO_SALARY', playerId: 'ann', amount: 200 });
+  });
+
+  it('pays double for an exact landing when doubleSalaryOnExactGo is on', () => {
+    const rules = { ...defaultRules, doubleSalaryOnExactGo: true };
+
+    const { state, events } = rollFrom(36, [2, 2], rules);
+
+    expect(player(state, 'ann').cash).toBe(1900);
+    expect(events).toContainEqual({ type: 'GO_SALARY', playerId: 'ann', amount: 400 });
+  });
+
+  it('pays only single salary for passing GO when doubleSalaryOnExactGo is on', () => {
+    const rules = { ...defaultRules, doubleSalaryOnExactGo: true };
+
+    const { state } = rollFrom(36, [3, 4], rules);
+
+    expect(player(state, 'ann').cash).toBe(1700);
+  });
+
+  it('reads the salary from the Rules', () => {
+    const rules = { ...defaultRules, goSalary: 350 };
+
+    const { state } = rollFrom(36, [3, 4], rules);
+
+    expect(player(state, 'ann').cash).toBe(1850);
+  });
+
+  it('pays nothing on a move that does not reach GO', () => {
+    const { state, events } = rollFrom(0, [3, 4]);
+
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(events.some((e) => e.type === 'GO_SALARY')).toBe(false);
+  });
+
+  it('pays once per lap when a single roll goes round more than once', () => {
+    const rules = { ...defaultRules, diceCount: 1, diceSides: 100 };
+
+    // 0 + 85 laps twice and ends on 5
+    const { state, events } = rollFrom(0, [85], rules);
+
+    expect(position(state, 'ann')).toBe(5);
+    expect(events).toContainEqual({ type: 'GO_SALARY', playerId: 'ann', amount: 400 });
+  });
+
+  it('finds GO wherever it is on the Board', () => {
+    const board = [...defaultBoard.slice(5), ...defaultBoard.slice(0, 5)].map((s, index) => ({ ...s, index }));
+    const game = withPlayer({ ...started(), board }, 'ann', { position: 30 });
+
+    // 30 + 7 = 37 passes GO at 35
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4));
+
+    expect(player(state, 'ann').cash).toBe(1700);
+    expect(player(state, 'ann').hasPassedGo).toBe(true);
+  });
+});
+
+describe('tax spaces', () => {
+  it('charges Income Tax from its Space definition', () => {
+    const { state, events } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
+
+    expect(player(state, 'ann').cash).toBe(1300);
+    expect(state.turn?.step).toBe('awaitEndTurn');
+    expect(events).toContainEqual({ type: 'TAX_PAID', playerId: 'ann', index: 4, amount: 200 });
+  });
+
+  it('charges Luxury Tax from its Space definition', () => {
+    const game = withPlayer(started(), 'ann', { position: 33 });
+
+    const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(2, 3));
+
+    expect(player(state, 'ann').cash).toBe(1400);
+  });
+
+  it('charges the current tax amount from the Board', () => {
+    const game = started();
+    const board = game.board.map((s) => (s.index === 4 ? { ...s, taxAmount: 75 } : s));
+
+    const { state } = act({ ...game, board }, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
+
+    expect(player(state, 'ann').cash).toBe(1425);
+  });
+
+  it('lets cash go negative when the Player cannot afford the tax', () => {
+    const { state } = act(withPlayer(started(), 'ann', { cash: 50 }), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
+
+    expect(player(state, 'ann').cash).toBe(-150);
+  });
+
+  it('does not feed the Jackpot when freeParkingMode is not jackpot', () => {
+    const { state } = act(started(), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3));
+
+    expect(state.bank.jackpot).toBe(0);
+  });
+});
+
+describe('Free Parking', () => {
+  /** ann rolls from 13 onto Free Parking (20). */
+  function landOnFreeParking(game: GameState, rules: Rules) {
+    return act(withPlayer(game, 'ann', { position: 13 }), { type: 'ROLL_DICE', playerId: 'ann' }, dice(3, 4), rules);
+  }
+
+  it('does nothing by default', () => {
+    const { state, events } = landOnFreeParking(started(), defaultRules);
+
+    expect(position(state, 'ann')).toBe(20);
+    expect(player(state, 'ann').cash).toBe(1500);
+    expect(events.map((e) => e.type)).toEqual(['DICE_ROLLED', 'MOVED']);
+  });
+
+  it('pays freeParkingAmount from the bank in fixed mode', () => {
+    const rules: Rules = { ...defaultRules, freeParkingMode: 'fixed', freeParkingAmount: 150 };
+
+    const { state, events } = landOnFreeParking(started(rules), rules);
+
+    expect(player(state, 'ann').cash).toBe(1650);
+    expect(events).toContainEqual({ type: 'FREE_PARKING_PAID', playerId: 'ann', amount: 150 });
+  });
+
+  describe('Jackpot mode', () => {
+    const rules: Rules = { ...defaultRules, freeParkingMode: 'jackpot' };
+
+    it('collects tax payments in the Jackpot', () => {
+      const { state } = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3), rules);
+
+      expect(state.bank.jackpot).toBe(200);
+    });
+
+    it('pays the whole Jackpot to the Player who lands on Free Parking and resets it', () => {
+      const game = { ...started(rules), bank: { jackpot: 300 } };
+
+      const { state, events } = landOnFreeParking(game, rules);
+
+      expect(player(state, 'ann').cash).toBe(1800);
+      expect(state.bank.jackpot).toBe(0);
+      expect(events).toContainEqual({ type: 'JACKPOT_WON', playerId: 'ann', amount: 300 });
+    });
+
+    it('pays out what tax put in', () => {
+      // ann pays 200 Income Tax, then bob rolls from 13 onto Free Parking
+      let state = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 3), rules).state;
+      state = act(state, { type: 'END_TURN', playerId: 'ann' }, noDice, rules).state;
+      state = withPlayer(state, 'bob', { position: 13 });
+
+      const { state: next } = act(state, { type: 'ROLL_DICE', playerId: 'bob' }, dice(3, 4), rules);
+
+      expect(player(next, 'bob').cash).toBe(1700);
+      expect(next.bank.jackpot).toBe(0);
+    });
+
+    it('is not fed by property purchases', () => {
+      const landed = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules).state;
+
+      const { state } = act(landed, { type: 'BUY_PROPERTY', playerId: 'ann' }, noDice, rules);
+
+      expect(state.bank.jackpot).toBe(0);
+    });
+
+    it('is not fed by Auction purchases', () => {
+      let state = act(started(rules), { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules).state;
+      state = act(state, { type: 'DECLINE_PROPERTY', playerId: 'ann' }, noDice, rules).state;
+      state = act(state, { type: 'PLACE_BID', playerId: 'bob', amount: 40 }, noDice, rules).state;
+      state = act(state, { type: 'PASS_AUCTION', playerId: 'ann' }, noDice, rules).state;
+
+      expect(state.deeds[3]?.ownerId).toBe('bob');
+      expect(state.bank.jackpot).toBe(0);
+    });
+
+    it('is not fed by rent', () => {
+      const game = owning(started(rules), 'bob', [3]);
+
+      const { state } = act(game, { type: 'ROLL_DICE', playerId: 'ann' }, dice(1, 2), rules);
+
+      expect(state.bank.jackpot).toBe(0);
+    });
+
+    it('pays nothing when the Jackpot is empty', () => {
+      const { state, events } = landOnFreeParking(started(rules), rules);
+
+      expect(player(state, 'ann').cash).toBe(1500);
+      expect(events.some((e) => e.type === 'JACKPOT_WON')).toBe(false);
+    });
+  });
+});
+
 describe('auctions', () => {
   const COUNTDOWN = defaultRules.auctionSeconds * 1000;
 

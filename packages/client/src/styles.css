@@ -247,6 +247,11 @@ input {
   transform: rotate(-30deg);
 }
 
+.centre .jackpot {
+  font-size: 1.4em;
+  font-weight: 600;
+}
+
 .dice {
   display: flex;
   gap: 0.5rem;

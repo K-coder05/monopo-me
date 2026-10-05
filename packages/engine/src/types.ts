@@ -104,6 +104,10 @@ export type GameEvent =
   | { type: 'TURN_STARTED'; playerId: string; round: number }
   | { type: 'DICE_ROLLED'; playerId: string; dice: number[]; total: number }
   | { type: 'MOVED'; playerId: string; from: number; to: number }
+  | { type: 'GO_SALARY'; playerId: string; amount: number }
+  | { type: 'TAX_PAID'; playerId: string; index: number; amount: number }
+  | { type: 'FREE_PARKING_PAID'; playerId: string; amount: number }
+  | { type: 'JACKPOT_WON'; playerId: string; amount: number }
   | { type: 'PROPERTY_OFFERED'; playerId: string; index: number; price: number }
   | { type: 'PURCHASE_LOCKED'; playerId: string; index: number }
   | { type: 'PROPERTY_BOUGHT'; playerId: string; index: number; price: number }
@@ -132,6 +136,8 @@ export type GameState = {
   turn?: Turn;
   /** Present while the turn is at the 'auction' step. */
   auction?: Auction;
+  /** `jackpot` only fills while freeParkingMode is 'jackpot'. */
+  bank: { jackpot: number };
   log: LogEntry[];
 };
 

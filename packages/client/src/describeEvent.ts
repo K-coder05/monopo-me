@@ -20,6 +20,14 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `${name(event.playerId)} rolled ${event.dice.join(' + ')} = ${event.total}`;
     case 'MOVED':
       return `${name(event.playerId)} moved from ${space(event.from)} to ${space(event.to)}`;
+    case 'GO_SALARY':
+      return `${name(event.playerId)} collected ${event.amount} salary`;
+    case 'TAX_PAID':
+      return `${name(event.playerId)} paid ${event.amount} for ${space(event.index)}`;
+    case 'FREE_PARKING_PAID':
+      return `${name(event.playerId)} collected ${event.amount} on Free Parking`;
+    case 'JACKPOT_WON':
+      return `${name(event.playerId)} won the Jackpot: ${event.amount}`;
     case 'PROPERTY_OFFERED':
       return `${name(event.playerId)} may buy ${space(event.index)} for ${event.price}`;
     case 'PURCHASE_LOCKED':
