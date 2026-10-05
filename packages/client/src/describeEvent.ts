@@ -1,3 +1,4 @@
+import { RULE_LABELS, SPACE_FIELD_LABELS, showValue } from './ruleLabels';
 import { HOTEL, type Creditor, type GameEvent, type GameState, type SkipReason, type TradeSide } from '@landlord/engine';
 
 const SKIP_TEXT: Record<SkipReason, string> = {
@@ -137,5 +138,13 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `Game over: ${name(event.winnerId)} wins!`;
     case 'RETURNED_TO_LOBBY':
       return 'Back in the Lobby';
+    case 'RULE_CHANGED':
+      return `Host changed ${RULE_LABELS[event.key] ?? event.key}: ${showValue(event.from)} → ${showValue(event.to)}`;
+    case 'SPACE_CHANGED':
+      return `Host changed ${event.field === 'name' ? String(event.from) : (game.board[event.index]?.name ?? `space ${event.index}`)} ${SPACE_FIELD_LABELS[event.field]}: ${showValue(event.from)} → ${showValue(event.to)}`;
+    case 'DEFAULTS_RESTORED':
+      return 'Host reset Rules and Board to the defaults';
+    case 'CHANGES_QUEUED':
+      return "Host's changes will apply when the current action finishes";
   }
 }

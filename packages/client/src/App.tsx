@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
-import type { GameState, RejoinKey } from '@landlord/engine';
+import type { GameEvent, GameState, RejoinKey } from '@landlord/engine';
 import { clearRejoinKey, loadRejoinKey, saveRejoinKey, socket } from './socket';
 import { Home } from './Home';
 import { Lobby } from './Lobby';
 import { Game } from './Game';
 import { GameOver } from './GameOver';
+import { describeEvent } from './describeEvent';
+
+const TOAST_MS = 6000;
+const isRuleChange = (e: GameEvent) =>
+  e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED' || e.type === 'DEFAULTS_RESTORED' || e.type === 'CHANGES_QUEUED';
+
+let nextToastId = 0;
 
 export function App() {
   const [joined, setJoined] = useState<RejoinKey | null>(null);
@@ -13,10 +20,19 @@ export function App() {
   const [clockOffset, setClockOffset] = useState(0);
   // Players with no open connection.
   const [away, setAway] = useState<string[]>([]);
+  // Rules and Board changes, shown to everyone for a few seconds.
+  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
-    const onState = ({ state, serverNow, away }: { state: GameState; serverNow: number; away: string[] }) => {
+    const onState = ({ state, events, serverNow, away }: { state: GameState; events: GameEvent[]; serverNow: number; away: string[] }) => {
       setGame(state);
+      // A reset is one toast, not one per value it changed.
+      const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED');
+      const fresh = events.filter((e) => isRuleChange(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
+      if (fresh.length > 0) {
+        setToasts((current) => [...current, ...fresh]);
+        setTimeout(() => setToasts((current) => current.filter((t) => !fresh.some((f) => f.id === t.id))), TOAST_MS);
+      }
       setAway(away);
       setClockOffset(serverNow - Date.now());
     };
@@ -49,7 +65,24 @@ export function App() {
       />
     );
   }
-  if (game.phase === 'lobby') return <Lobby game={game} me={joined.playerId} away={away} />;
-  if (game.phase === 'finished') return <GameOver game={game} me={joined.playerId} />;
-  return <Game game={game} me={joined.playerId} clockOffset={clockOffset} away={away} />;
+  const screen =
+    game.phase === 'lobby' ? (
+      <Lobby game={game} me={joined.playerId} away={away} />
+    ) : game.phase === 'finished' ? (
+      <GameOver game={game} me={joined.playerId} />
+    ) : (
+      <Game game={game} me={joined.playerId} clockOffset={clockOffset} away={away} />
+    );
+  return (
+    <>
+      {screen}
+      <div className="toasts" role="status">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.text}
+          </div>
+        ))}
+      </div>
+    </>
+  );
 }

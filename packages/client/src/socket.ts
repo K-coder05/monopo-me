@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import type { Ack, ClientToServer, PropertyIntent, ServerToClient, RejoinKey, TradeSide } from '@landlord/engine';
+import type { Ack, ClientToServer, PropertyIntent, Rules, ServerToClient, RejoinKey, SpaceEdit, TradeSide } from '@landlord/engine';
 
 export const socket: Socket<ServerToClient, ClientToServer> = io();
 
@@ -46,7 +46,8 @@ export type Intent =
   | 'PAY_DEBT'
   | 'DECLARE_BANKRUPTCY'
   | 'REMATCH'
-  | 'BACK_TO_LOBBY';
+  | 'BACK_TO_LOBBY'
+  | 'RESET_TO_DEFAULTS';
 
 /** Resolves with the server's error message, or null if it was accepted. */
 function toError(resolve: (error: string | null) => void): Ack {
@@ -79,4 +80,14 @@ export function placeBid(amount: number): Promise<string | null> {
 /** Proposes, revises or counters the open Trade; resolves like `send`. */
 export function proposeTrade(partnerId: string, give: TradeSide, take: TradeSide): Promise<string | null> {
   return new Promise((resolve) => socket.emit('PROPOSE_TRADE', { partnerId, give, take }, toError(resolve)));
+}
+
+/** Host only: sends staged Rules changes; the server rejects bad values with a message. Resolves like `send`. */
+export function updateRules(changes: Partial<Rules>): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('UPDATE_RULES', { changes }, toError(resolve)));
+}
+
+/** Host only: sends staged Space definition changes. Resolves like `send`. */
+export function updateBoard(edits: SpaceEdit[]): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('UPDATE_BOARD', { edits }, toError(resolve)));
 }

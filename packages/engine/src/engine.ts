@@ -1,4 +1,5 @@
 import { defaultBoard, defaultCards, defaultRules } from './defaults';
+import { applyPending, resetToDefaults, updateBoard, updateRules } from './edits';
 import type {
   Action,
   AfterDebts,
@@ -156,9 +157,20 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'BACK_TO_LOBBY':
       next = backToLobby(state, action.playerId, events);
       break;
+    case 'UPDATE_RULES':
+      next = updateRules(state, action.playerId, action.changes);
+      break;
+    case 'UPDATE_BOARD':
+      next = updateBoard(state, action.playerId, action.edits);
+      break;
+    case 'RESET_TO_DEFAULTS':
+      next = resetToDefaults(state, action.playerId);
+      break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
   }
+  const isEdit = action.type === 'UPDATE_RULES' || action.type === 'UPDATE_BOARD' || action.type === 'RESET_TO_DEFAULTS';
+  next = applyPending(next, events, isEdit);
   return { state: appendLog(next, events), events };
 }
 
@@ -210,7 +222,8 @@ function start(state: GameState, playerId: string, rules: Rules, rng: Rng, event
   );
   events.push({ type: 'TURN_ORDER_SET', playerIds: order });
 
-  const players = order.map((id) => state.players.find((p) => p.id === id)!);
+  // Players who joined before a Host edit of startingCash still start with the current amount.
+  const players = order.map((id) => ({ ...state.players.find((p) => p.id === id)!, cash: rules.startingCash }));
   const first = players[0]!;
   events.push({ type: 'TURN_STARTED', playerId: first.id, round: 1 });
   return {
@@ -1051,6 +1064,8 @@ function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[], dec
     deeds: {},
     debts: [],
     trade: undefined,
+    pendingEdit: undefined,
+    rulesChangedMidGame: undefined,
     bankruptcies: [],
     winnerId: undefined,
     auction: undefined,

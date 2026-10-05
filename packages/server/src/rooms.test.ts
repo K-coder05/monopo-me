@@ -42,6 +42,21 @@ describe('Rooms persistence and reconnect', () => {
     expect(() => restarted.rejoin('NOPE1', bob.token)).toThrow(IllegalActionError);
   });
 
+  it('keeps Rules edits per Room and across a restart, and refuses a non-host', () => {
+    const rooms = open();
+    const host = rooms.create('Ann', COLORS[0]);
+    const bob = rooms.join(host.roomCode, 'Bob', COLORS[1]);
+    const other = rooms.create('Cy', COLORS[2]);
+
+    expect(() =>
+      rooms.act(host.roomCode, { type: 'UPDATE_RULES', playerId: bob.playerId, changes: { goSalary: 1 } }),
+    ).toThrow(IllegalActionError);
+    rooms.act(host.roomCode, { type: 'UPDATE_RULES', playerId: host.playerId, changes: { goSalary: 400 } });
+
+    expect(open().get(host.roomCode)!.rules.goSalary).toBe(400);
+    expect(rooms.get(other.roomCode)!.rules.goSalary).toBe(200);
+  });
+
   it('tracks who is connected', () => {
     const rooms = open();
     const host = rooms.create('Ann', COLORS[0]);

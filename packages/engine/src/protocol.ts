@@ -1,4 +1,4 @@
-import type { GameEvent, GameState, TradeSide } from './types';
+import type { GameEvent, GameState, Rules, SpaceEdit, TradeSide } from './types';
 
 /** Socket messages shared by server and client. */
 
@@ -44,6 +44,12 @@ export type ClientToServer = {
   DECLARE_BANKRUPTCY: (msg: object, ack: Ack) => void;
   REMATCH: (msg: object, ack: Ack) => void;
   BACK_TO_LOBBY: (msg: object, ack: Ack) => void;
+  // Host only; the server checks types and ranges and rejects bad values with a message.
+  /** `changes` holds only the Rules keys to change. */
+  UPDATE_RULES: (msg: { changes: Partial<Rules> }, ack: Ack) => void;
+  UPDATE_BOARD: (msg: { edits: SpaceEdit[] }, ack: Ack) => void;
+  /** Restores the built-in Defaults for Rules and Board. */
+  RESET_TO_DEFAULTS: (msg: object, ack: Ack) => void;
 };
 
 export type ServerToClient = {

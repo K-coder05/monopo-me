@@ -135,6 +135,7 @@ io.on('connection', (socket: GameSocket) => {
     'DECLARE_BANKRUPTCY',
     'REMATCH',
     'BACK_TO_LOBBY',
+    'RESET_TO_DEFAULTS',
   ] as const) {
     socket.on(type, (_msg, ack) =>
       handle(ack, () => {
@@ -144,6 +145,23 @@ io.on('connection', (socket: GameSocket) => {
       }),
     );
   }
+
+  // The engine checks the sender is the Host and validates every value.
+  socket.on('UPDATE_RULES', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'UPDATE_RULES', playerId, changes: msg?.changes ?? {} }));
+      return {};
+    }),
+  );
+
+  socket.on('UPDATE_BOARD', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'UPDATE_BOARD', playerId, edits: msg?.edits ?? [] }));
+      return {};
+    }),
+  );
 
   // The engine validates the amount (whole number, above the current bid, within cash).
   socket.on('PLACE_BID', (msg, ack) =>

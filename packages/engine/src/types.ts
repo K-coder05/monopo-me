@@ -59,6 +59,20 @@ export type SpaceDefinition = {
   taxAmount?: number;
 };
 
+/** The editable fields of a Space definition (type and colour group are fixed). */
+export type SpaceField = 'name' | 'price' | 'houseCost' | 'rents' | 'taxAmount';
+
+export type SpaceEdit = { index: number } & Partial<Pick<SpaceDefinition, SpaceField>>;
+
+/** Host edits waiting for a multi-step action to finish; later edits overwrite earlier ones. */
+export type PendingEdit = {
+  rules: Partial<Rules>;
+  /** By space index. */
+  board: Record<number, Partial<Pick<SpaceDefinition, SpaceField>>>;
+  /** The edit is a reset to the Defaults, so applying it is logged as one. */
+  reset?: boolean;
+};
+
 export type DeckKind = 'chance' | 'treasure';
 
 /** Who gives, receives or is targeted by an Effect. */
@@ -290,7 +304,12 @@ export type GameEvent =
   | { type: 'DEBT_PAID'; debtorId: string; creditor: Creditor; amount: number }
   | { type: 'BANKRUPT'; playerId: string; creditor: Creditor }
   | { type: 'GAME_OVER'; winnerId: string }
-  | { type: 'RETURNED_TO_LOBBY' };
+  | { type: 'RETURNED_TO_LOBBY' }
+  | { type: 'RULE_CHANGED'; key: keyof Rules; from: Rules[keyof Rules]; to: Rules[keyof Rules] }
+  | { type: 'SPACE_CHANGED'; index: number; field: SpaceField; from: SpaceDefinition[SpaceField]; to: SpaceDefinition[SpaceField] }
+  | { type: 'DEFAULTS_RESTORED' }
+  /** The Host's edits wait for the current Auction, Debt or Card to finish. */
+  | { type: 'CHANGES_QUEUED' };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
@@ -323,6 +342,10 @@ export type GameState = {
   /** Players owed an extra turn by a card, in order; each plays right after the current turn. */
   extraTurns: string[];
   decks: Decks;
+  /** Host edits to Rules or Board that arrived mid-action; applied once the action finishes. */
+  pendingEdit?: PendingEdit;
+  /** Set once Rules or Board change during a game; drives the banner. */
+  rulesChangedMidGame?: boolean;
   /** `jackpot` only fills while freeParkingMode is 'jackpot'. */
   bank: { jackpot: number };
   log: LogEntry[];
@@ -356,7 +379,13 @@ export type Action =
   | { type: 'DECLARE_BANKRUPTCY'; playerId: string }
   /** Host only, from the Game Over screen. */
   | { type: 'REMATCH'; playerId: string }
-  | { type: 'BACK_TO_LOBBY'; playerId: string };
+  | { type: 'BACK_TO_LOBBY'; playerId: string }
+  /** Host only. `changes` holds only the keys to change. */
+  | { type: 'UPDATE_RULES'; playerId: string; changes: Partial<Rules> }
+  /** Host only. */
+  | { type: 'UPDATE_BOARD'; playerId: string; edits: SpaceEdit[] }
+  /** Host only: the built-in Defaults for Rules and Board. */
+  | { type: 'RESET_TO_DEFAULTS'; playerId: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

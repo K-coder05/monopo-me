@@ -550,3 +550,71 @@ button.small {
 .trade-side input[type='number'] {
   width: 5rem;
 }
+
+.rules-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(32rem, 100vw);
+  overflow-y: auto;
+  padding: 1rem;
+  background: var(--space);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
+  z-index: 20;
+}
+
+.rules-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rules-form label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.2rem 0;
+}
+
+.rules-form input:not([type='checkbox']) {
+  width: 9rem;
+}
+
+.board-form input {
+  width: 6rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.board-form td:nth-child(2) input {
+  width: 9rem;
+}
+
+.notice,
+.banner {
+  padding: 0.5rem 0.75rem;
+  background: #fff3cd;
+  border: 1px solid #d9b94b;
+  border-radius: 6px;
+}
+
+.toasts {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 0.5rem 1rem;
+  background: var(--fg);
+  color: white;
+  border-radius: 6px;
+}

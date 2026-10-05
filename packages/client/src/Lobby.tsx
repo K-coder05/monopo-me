@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { GameState } from '@landlord/engine';
 import { send } from './socket';
+import { RulesPanel } from './RulesPanel';
 
 export function Lobby({ game, me, away }: { game: GameState; me: string; away: string[] }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const link = `${location.origin}/?room=${game.roomCode}`;
   const isHost = me === game.hostId;
   const enough = game.players.length >= game.rules.minPlayers;
@@ -43,6 +45,13 @@ export function Lobby({ game, me, away }: { game: GameState; me: string; away: s
           </li>
         ))}
       </ul>
+
+      <p>
+        <button type="button" className="secondary" onClick={() => setRulesOpen(true)}>
+          Rules
+        </button>
+      </p>
+      {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
 
       {isHost ? (
         <button
