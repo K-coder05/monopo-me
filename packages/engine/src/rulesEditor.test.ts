@@ -58,7 +58,6 @@ describe('editing Rules', () => {
 
     expect(edited.rules.goSalary).toBe(400);
     expect(events).toContainEqual({ type: 'RULE_CHANGED', key: 'goSalary', from: 200, to: 400 });
-    expect(edited.rulesChangedMidGame).toBe(true);
   });
 
   it('pays the new GO salary to the next Player to pass GO', () => {
@@ -68,9 +67,8 @@ describe('editing Rules', () => {
     expect(after.players.find((p) => p.id === 'ann')!.cash).toBe(1500 + 400);
   });
 
-  it('does not mark a Lobby edit as a mid-game change, and startingCash applies at start', () => {
+  it('applies a Lobby startingCash edit at start', () => {
     const edited = editRules(lobby(), { startingCash: 2000 }).state;
-    expect(edited.rulesChangedMidGame).toBeUndefined();
     const started = act(edited, { type: 'START_GAME', playerId: 'ann' }, dice(6, 5, 1, 2)).state;
     expect(started.players.map((p) => p.cash)).toEqual([2000, 2000]);
   });

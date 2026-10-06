@@ -443,8 +443,6 @@ export type GameState = {
   decksHidden?: boolean;
   /** Host edits to Rules or Board that arrived mid-action; applied once the action finishes. */
   pendingEdit?: PendingEdit;
-  /** Set once Rules or Board change during a game; drives the banner. */
-  rulesChangedMidGame?: boolean;
   /** `jackpot` only fills while freeParkingMode is 'jackpot'. */
   bank: { jackpot: number };
   log: LogEntry[];

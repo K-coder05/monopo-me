@@ -13,6 +13,7 @@ import { hostOverride, send, sendPropertyAction, type Intent } from './socket';
 import { LeaveButton } from './LeaveButton';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
+import { isRulesChange } from './rulesChanges';
 import { TitleDeed } from './TitleDeed';
 import { RulesPanel } from './RulesPanel';
 import { CardsPanel } from './CardsPanel';
@@ -207,14 +208,14 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
                 </button>
               </>
             )}
-            <button className="secondary" onClick={() => setRulesOpen(true)}>
-              Rules
-            </button>
             <button className="secondary" onClick={() => setCardsOpen(true)}>
               Cards
             </button>
             {isHost && (
               <>
+                <button className="secondary" onClick={() => setRulesOpen(true)}>
+                  Rules
+                </button>
                 <button className="secondary" onClick={() => act(game.paused ? 'RESUME' : 'PAUSE')}>
                   {game.paused ? 'Resume' : 'Pause'}
                 </button>
@@ -236,8 +237,6 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
             </label>
           </div>
         </section>
-        {game.rulesChangedMidGame && <p className="banner">Rules changed during this game. Open Rules to see the current values.</p>}
-        {game.pendingEdit && <p className="notice">Rules changes will apply when the current action finishes.</p>}
         {error && <p className="error">{error}</p>}
 
         {!spectating && (
@@ -307,9 +306,11 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         )}
 
         <ol className="log" aria-label="Game log">
-          {game.log.map((entry) => (
-            <li key={entry.seq}>{describeEvent(entry.event, game)}</li>
-          ))}
+          {game.log
+            .filter((entry) => !isRulesChange(entry.event))
+            .map((entry) => (
+              <li key={entry.seq}>{describeEvent(entry.event, game)}</li>
+            ))}
           <li ref={logEnd} aria-hidden />
         </ol>
         <LeaveButton game={game} me={me} />
@@ -361,7 +362,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         <CardModal game={game} me={me} onHostTools={() => setHostToolsOpen(true)} />
       )}
 
-      {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
+      {rulesOpen && isHost && <RulesPanel game={game} onClose={() => setRulesOpen(false)} />}
       {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
       {presetsOpen && <PresetsPanel game={game} onClose={() => setPresetsOpen(false)} />}
       {hostToolsOpen && isHost && <HostToolsPanel game={game} me={me} away={away} onClose={() => setHostToolsOpen(false)} />}

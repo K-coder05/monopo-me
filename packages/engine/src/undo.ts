@@ -62,7 +62,6 @@ export function undo(state: GameState, history: GameState[], playerId: string, n
     rules: state.rules,
     board: state.board,
     pendingEdit: state.pendingEdit,
-    rulesChangedMidGame: state.rulesChangedMidGame,
     decksHidden: state.decksHidden,
     decks: state.decks,
     turn: snapshot.turn && { ...snapshot.turn, timerEndsAt: undefined },

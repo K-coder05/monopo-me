@@ -43,22 +43,22 @@ export function Lobby({ game, me, away }: { game: GameState; me: string; away: s
       <RoomMembers game={game} me={me} away={away} />
 
       <p>
-        <button type="button" className="secondary" onClick={() => setRulesOpen(true)}>
-          Rules
-        </button>{' '}
         <button type="button" className="secondary" onClick={() => setCardsOpen(true)}>
           Cards
         </button>
         {isHost && (
           <>
             {' '}
+            <button type="button" className="secondary" onClick={() => setRulesOpen(true)}>
+              Rules
+            </button>{' '}
             <button type="button" className="secondary" onClick={() => setPresetsOpen(true)}>
               Presets
             </button>
           </>
         )}
       </p>
-      {rulesOpen && <RulesPanel game={game} me={me} onClose={() => setRulesOpen(false)} />}
+      {rulesOpen && isHost && <RulesPanel game={game} onClose={() => setRulesOpen(false)} />}
       {cardsOpen && <CardsPanel game={game} me={me} onClose={() => setCardsOpen(false)} />}
       {presetsOpen && <PresetsPanel game={game} onClose={() => setPresetsOpen(false)} />}
 

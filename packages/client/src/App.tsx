@@ -11,11 +11,8 @@ import { playSound } from './sounds';
 import { PREFERENCE_KEYS, readPreference } from './usePreference';
 
 const TOAST_MS = 6000;
+// Rules and Board changes are kept from every Player, so only card edits get a toast.
 const HOST_EDITS: GameEvent['type'][] = [
-  'RULE_CHANGED',
-  'SPACE_CHANGED',
-  'DEFAULTS_RESTORED',
-  'CHANGES_QUEUED',
   'CARD_ADDED',
   'CARD_EDITED',
   'CARD_COPIES_CHANGED',
@@ -25,8 +22,6 @@ const HOST_EDITS: GameEvent['type'][] = [
   'DECK_RESET',
   'DECK_SHUFFLED',
   'DECK_CONTENTS_HIDDEN',
-  'PRESET_LOADED',
-  'PRESET_APPLIED',
 ];
 const isHostEdit = (e: GameEvent) => HOST_EDITS.includes(e.type);
 
@@ -41,7 +36,7 @@ export function App() {
   const [clockOffset, setClockOffset] = useState(0);
   // Players with no open connection.
   const [away, setAway] = useState<string[]>([]);
-  // Rules, Board and card changes, shown to everyone for a few seconds.
+  // Card changes, shown to everyone for a few seconds.
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
@@ -49,9 +44,7 @@ export function App() {
       setGame(state);
       // The Game screen (and its sounds) gives way to Game Over in this same update, so cheer here.
       if (events.some((e) => e.type === 'GAME_OVER') && readPreference(PREFERENCE_KEYS.sound, true)) playSound('fanfare');
-      // A reset or Preset load is one toast, not one per value it changed.
-      const reset = events.some((e) => e.type === 'DEFAULTS_RESTORED' || e.type === 'PRESET_LOADED' || e.type === 'PRESET_APPLIED');
-      const fresh = events.filter((e) => isHostEdit(e) && !(reset && (e.type === 'RULE_CHANGED' || e.type === 'SPACE_CHANGED'))).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
+      const fresh = events.filter(isHostEdit).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
       if (fresh.length > 0) {
         setToasts((current) => [...current, ...fresh]);
         setTimeout(() => setToasts((current) => current.filter((t) => !fresh.some((f) => f.id === t.id))), TOAST_MS);

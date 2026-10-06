@@ -20,9 +20,8 @@ const toText = (value: unknown): string =>
 const toNumber = (text: string): number | string => (text.trim() !== '' && !Number.isNaN(Number(text)) ? Number(text) : text);
 const toList = (text: string): (number | string)[] => text.split(',').map(toNumber);
 
-/** Side panel for the Rules and Board. The Host stages edits and applies them together; everyone else reads. */
-export function RulesPanel({ game, me, onClose }: { game: GameState; me: string; onClose: () => void }) {
-  const isHost = me === game.hostId;
+/** The Host's side panel for the Rules and Board: edits are staged and applied together. No one else sees it. */
+export function RulesPanel({ game, onClose }: { game: GameState; onClose: () => void }) {
   // Only the fields the Host has touched; everything else keeps following the live values.
   const [ruleDraft, setRuleDraft] = useState<Partial<Record<keyof Rules, string | boolean>>>({});
   const [spaceDraft, setSpaceDraft] = useState<Record<string, string>>({});
@@ -94,8 +93,7 @@ export function RulesPanel({ game, me, onClose }: { game: GameState; me: string;
           Close
         </button>
       </div>
-      {!isHost && <p className="muted">Only the Host can change these.</p>}
-      {game.pendingEdit && <p className="notice">The Host&apos;s changes will apply when the current action finishes.</p>}
+      {game.pendingEdit && <p className="notice">Your changes will apply when the current action finishes.</p>}
 
       <div className="rules-form">
         {RULE_FIELDS.map((field) => (
@@ -104,18 +102,17 @@ export function RulesPanel({ game, me, onClose }: { game: GameState; me: string;
             {field.kind === 'toggle' ? (
               <input
                 type="checkbox"
-                disabled={!isHost}
                 checked={shown(field) as boolean}
                 onChange={(e) => setRule(field.key, e.target.checked)}
               />
             ) : field.kind === 'mode' ? (
-              <select disabled={!isHost} value={shown(field) as string} onChange={(e) => setRule(field.key, e.target.value)}>
+              <select value={shown(field) as string} onChange={(e) => setRule(field.key, e.target.value)}>
                 {FREE_PARKING_MODES.map((mode) => (
                   <option key={mode}>{mode}</option>
                 ))}
               </select>
             ) : (
-              <input readOnly={!isHost} value={shown(field) as string} onChange={(e) => setRule(field.key, e.target.value)} />
+              <input value={shown(field) as string} onChange={(e) => setRule(field.key, e.target.value)} />
             )}
           </label>
         ))}
@@ -135,7 +132,6 @@ export function RulesPanel({ game, me, onClose }: { game: GameState; me: string;
                       <input
                         aria-label={`${space.name} ${SPACE_FIELD_LABELS[field]}`}
                         placeholder={SPACE_FIELD_LABELS[field]}
-                        readOnly={!isHost}
                         value={spaceShown(space, field)}
                         onChange={(e) => setSpaceDraft((d) => ({ ...d, [spaceKey(space.index, field)]: e.target.value }))}
                       />
@@ -148,19 +144,17 @@ export function RulesPanel({ game, me, onClose }: { game: GameState; me: string;
         </tbody>
       </table>
 
-      {isHost && (
-        <div className="actions">
-          <button disabled={!dirty} onClick={apply}>
-            Apply
-          </button>
-          <button className="secondary" disabled={!dirty} onClick={discard}>
-            Discard
-          </button>
-          <button className="secondary" onClick={reset}>
-            Reset to defaults
-          </button>
-        </div>
-      )}
+      <div className="actions">
+        <button disabled={!dirty} onClick={apply}>
+          Apply
+        </button>
+        <button className="secondary" disabled={!dirty} onClick={discard}>
+          Discard
+        </button>
+        <button className="secondary" onClick={reset}>
+          Reset to defaults
+        </button>
+      </div>
       {error && <p className="error">{error}</p>}
     </aside>
   );

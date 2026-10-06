@@ -259,6 +259,5 @@ export function applyPending(state: GameState, events: GameEvent[], justStaged: 
     rules: rules as Rules,
     board,
     pendingEdit: undefined,
-    rulesChangedMidGame: state.rulesChangedMidGame || (state.phase === 'playing' && changes.length > 0) || undefined,
   };
 }

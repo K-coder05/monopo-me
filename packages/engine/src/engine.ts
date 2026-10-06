@@ -1368,7 +1368,6 @@ function freshGame(state: GameState, rules: Rules, board: SpaceDefinition[], dec
     debts: [],
     trade: undefined,
     pendingEdit: undefined,
-    rulesChangedMidGame: undefined,
     bankruptcies: [],
     winnerId: undefined,
     auction: undefined,
