@@ -7,6 +7,8 @@
   --line: #2b2b2b;
   --accent: #1f6f43;
   --error: #b00020;
+  --chance: #e8812a;
+  --treasure: #2a7fc4;
   font-family: system-ui, sans-serif;
   color: var(--fg);
   background: var(--bg);
@@ -358,13 +360,13 @@ input {
 }
 
 .deck.chance {
-  --deck: #e8812a;
+  --deck: var(--chance);
   background: var(--deck);
   transform: rotate(-8deg);
 }
 
 .deck.treasure {
-  --deck: #2a7fc4;
+  --deck: var(--treasure);
   background: var(--deck);
   transform: rotate(8deg);
 }
@@ -603,22 +605,160 @@ button.link {
   gap: 0.4rem;
 }
 
-.mine h3 {
-  margin: 0 0 0.3rem;
-  font-size: 1rem;
+/* The Player's hand: docked along the bottom of the screen on wide screens. */
+.hand {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  overflow-x: auto;
+  padding: 0.6rem 16px calc(0.6rem + env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -4px 12px rgb(0 0 0 / 0.1);
 }
 
-.mine ul {
+.hand > p {
+  margin: auto;
+}
+
+.hand .group {
   list-style: none;
-  margin: 0 0 0.4rem;
-  padding: 0 0 0 0.5rem;
-  border-left: 0.4rem solid #999;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
 }
 
-.mine .build {
-  display: inline-flex;
+/* A full Colour group sits on a shared underline. */
+.hand .group.complete {
+  padding-bottom: 0.25rem;
+  border-bottom: 3px solid var(--accent);
+}
+
+.hand-card {
+  width: 8.5rem;
+  display: flex;
+  flex-direction: column;
   gap: 0.3rem;
-  margin-left: 0.4rem;
+}
+
+.hand-card .face {
+  display: flex;
+  flex-direction: column;
+  height: 6.2rem;
+  padding: 0;
+  overflow: hidden;
+  text-align: center;
+  background: var(--space);
+  color: var(--fg);
+  border: 2px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0.15rem 0.15rem 0 rgb(0 0 0 / 0.15);
+  transition: transform 0.12s ease;
+}
+
+button.face:hover,
+button.face:focus-visible {
+  transform: translateY(-0.3rem);
+}
+
+.hand-card .band {
+  min-height: 1.4rem;
+  background: var(--band);
+  border-bottom: 2px solid var(--line);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4rem;
+}
+
+.hand-card .name {
+  padding: 0.3rem 0.3rem 0;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.hand-card .detail {
+  margin-top: auto;
+  padding: 0 0.3rem 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.hand-card.mortgaged .face {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.hand-card.kept .band {
+  color: white;
+  background: var(--muted);
+}
+
+.hand-card.kept.chance .band {
+  background: var(--chance);
+}
+
+.hand-card.kept.treasure .band {
+  background: var(--treasure);
+}
+
+.hand-card.kept .detail {
+  margin-top: 0.2rem;
+  overflow: hidden;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.card-actions button {
+  flex: 1;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hand-card .face {
+    transition: none;
+  }
+}
+
+/* `--hand-height` is the docked hand's measured height, set by the Hand component. */
+@media (min-width: 701px) {
+  .game {
+    /* Room to scroll everything above the docked hand. */
+    padding-bottom: calc(16px + var(--hand-height, 0px));
+  }
+
+  /* Keep the whole board visible above the hand. */
+  .pan-zoom {
+    width: min(calc(100vw - 32px), calc(90vh - var(--hand-height, 0px)), 760px);
+  }
+}
+
+/* On small screens the action panel is docked instead, so the hand scrolls with the page under the board. */
+@media (max-width: 700px) {
+  .hand {
+    position: static;
+    order: 1;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.5rem 0;
+    background: none;
+    border-top: none;
+    box-shadow: none;
+  }
+
+  .side {
+    order: 2;
+  }
 }
 
 button.small {
@@ -908,7 +1048,8 @@ button.small {
 .music-controls {
   position: fixed;
   left: 0.75rem;
-  bottom: 0.75rem;
+  /* Just above the docked hand during a game. */
+  bottom: calc(0.75rem + var(--hand-height, 0px));
   z-index: 30;
   display: flex;
   align-items: center;
