@@ -28,6 +28,7 @@ function soundFor(event: GameEvent, me: string): Sound | null {
     case 'AUCTION_WON':
     case 'GO_SALARY':
     case 'JACKPOT_WON':
+    case 'TRADE_COMPLETED':
       return 'cash';
     case 'RENT_PAID':
     case 'TAX_PAID':

@@ -60,6 +60,11 @@ describe('plan', () => {
     expect(plan([{ type: 'TURN_STARTED', playerId: 'ann', round: 2 }], SIZE, 'bob')).toEqual([]);
   });
 
+  it('rings the till for a completed Trade, as for a purchase', () => {
+    const trade = { proposerId: 'ann', partnerId: 'bob', give: { cash: 50, properties: [], cards: [] }, take: { cash: 0, properties: [1], cards: [] } };
+    expect(plan([{ type: 'TRADE_COMPLETED', trade }], SIZE, 'cat')).toEqual([{ kind: 'sound', sound: 'cash' }]);
+  });
+
   it('cues rent, cards and Jail', () => {
     const events: GameEvent[] = [
       { type: 'RENT_PAID', playerId: 'ann', ownerId: 'bob', index: 1, amount: 2 },
