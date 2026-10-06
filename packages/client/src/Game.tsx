@@ -13,7 +13,7 @@ import { hostOverride, send, sendPropertyAction, type Intent } from './socket';
 import { LeaveButton } from './LeaveButton';
 import { Board } from './Board';
 import { describeEvent } from './describeEvent';
-import { isRulesChange } from './rulesChanges';
+import { isHiddenEdit } from './hiddenEdits';
 import { TitleDeed } from './TitleDeed';
 import { RulesPanel } from './RulesPanel';
 import { CardsPanel } from './CardsPanel';
@@ -307,7 +307,7 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
 
         <ol className="log" aria-label="Game log">
           {game.log
-            .filter((entry) => !isRulesChange(entry.event))
+            .filter((entry) => !isHiddenEdit(entry.event))
             .map((entry) => (
               <li key={entry.seq}>{describeEvent(entry.event, game)}</li>
             ))}

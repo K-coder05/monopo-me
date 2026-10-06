@@ -11,19 +11,9 @@ import { playSound } from './sounds';
 import { PREFERENCE_KEYS, readPreference } from './usePreference';
 
 const TOAST_MS = 6000;
-// Rules and Board changes are kept from every Player, so only card edits get a toast.
-const HOST_EDITS: GameEvent['type'][] = [
-  'CARD_ADDED',
-  'CARD_EDITED',
-  'CARD_COPIES_CHANGED',
-  'CARD_ENABLED_CHANGED',
-  'CARD_DELETED',
-  'HELD_CARD_REMOVED',
-  'DECK_RESET',
-  'DECK_SHUFFLED',
-  'DECK_CONTENTS_HIDDEN',
-];
-const isHostEdit = (e: GameEvent) => HOST_EDITS.includes(e.type);
+// Rules, Board and card edits are kept from every Player (see hiddenEdits), so only these Host actions get a toast.
+const TOASTED: GameEvent['type'][] = ['HELD_CARD_REMOVED', 'DECK_SHUFFLED', 'DECK_CONTENTS_HIDDEN'];
+const isToasted = (e: GameEvent) => TOASTED.includes(e.type);
 
 let nextToastId = 0;
 
@@ -36,7 +26,7 @@ export function App() {
   const [clockOffset, setClockOffset] = useState(0);
   // Players with no open connection.
   const [away, setAway] = useState<string[]>([]);
-  // Card changes, shown to everyone for a few seconds.
+  // Host deck actions, shown to everyone for a few seconds.
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
@@ -44,7 +34,7 @@ export function App() {
       setGame(state);
       // The Game screen (and its sounds) gives way to Game Over in this same update, so cheer here.
       if (events.some((e) => e.type === 'GAME_OVER') && readPreference(PREFERENCE_KEYS.sound, true)) playSound('fanfare');
-      const fresh = events.filter(isHostEdit).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
+      const fresh = events.filter(isToasted).map((e) => ({ id: nextToastId++, text: describeEvent(e, state) }));
       if (fresh.length > 0) {
         setToasts((current) => [...current, ...fresh]);
         setTimeout(() => setToasts((current) => current.filter((t) => !fresh.some((f) => f.id === t.id))), TOAST_MS);
