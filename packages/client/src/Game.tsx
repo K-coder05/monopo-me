@@ -339,10 +339,11 @@ export function Game({ game, me, clockOffset, away }: { game: GameState; me: str
         </div>
       )}
 
-      {/* Stays up under an open title deed so nobody loses the countdown while checking the property. */}
-      {game.auction && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
+      {/* Stays up under an open title deed so nobody loses the countdown while checking the property.
+          Like the other prompts, it and the Debt modal wait for the dice and token to finish. */}
+      {game.auction && !playback.busy && <AuctionModal game={game} auction={game.auction} me={me} clockOffset={clockOffset} />}
 
-      {game.turn?.step === 'awaitDebt' && (
+      {game.turn?.step === 'awaitDebt' && !playback.busy && (
         <DebtModal game={game} me={me} away={away} onTrade={() => setBuilding(true)} onHostTools={() => setHostToolsOpen(true)} />
       )}
 
