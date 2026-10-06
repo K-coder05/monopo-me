@@ -902,3 +902,41 @@ button.small {
   width: auto;
   align-self: center;
 }
+
+/* Background music: bottom-left on wide screens, top-left on phones (the docked panel owns the bottom). */
+
+.music-controls {
+  position: fixed;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.25rem;
+  background: var(--space);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.15);
+}
+
+.music-controls button {
+  display: grid;
+  place-items: center;
+  padding: 0.3rem;
+  border-radius: 50%;
+}
+
+.music-controls input[type='range'] {
+  width: 5.5rem;
+  padding: 0;
+  border: none;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 700px) {
+  .music-controls {
+    bottom: auto;
+    top: 0.5rem;
+  }
+}

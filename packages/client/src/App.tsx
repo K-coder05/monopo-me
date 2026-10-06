@@ -5,6 +5,7 @@ import { Home } from './Home';
 import { Lobby } from './Lobby';
 import { Game } from './Game';
 import { GameOver } from './GameOver';
+import { MusicControls } from './MusicControls';
 import { describeEvent } from './describeEvent';
 import { playSound } from './sounds';
 import { PREFERENCE_KEYS, readPreference } from './usePreference';
@@ -88,14 +89,17 @@ export function App() {
 
   if (!joined || !game) {
     return (
-      <Home
-        notice={notice}
-        onJoined={(session) => {
-          saveRejoinKey(session);
-          setNotice(null);
-          setJoined(session);
-        }}
-      />
+      <>
+        <Home
+          notice={notice}
+          onJoined={(session) => {
+            saveRejoinKey(session);
+            setNotice(null);
+            setJoined(session);
+          }}
+        />
+        <MusicControls />
+      </>
     );
   }
   const screen =
@@ -109,6 +113,7 @@ export function App() {
   return (
     <>
       {screen}
+      <MusicControls />
       <div className="toasts" role="status">
         {toasts.map((t) => (
           <div key={t.id} className="toast">
