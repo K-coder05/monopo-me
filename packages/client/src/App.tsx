@@ -10,10 +10,9 @@ import { describeEvent } from './describeEvent';
 import { playSound } from './sounds';
 import { PREFERENCE_KEYS, readPreference } from './usePreference';
 
-const TOAST_MS = 6000;
-// Rules, Board and card edits are kept from every Player (see hiddenEdits), so only these Host actions get a toast.
-const TOASTED: GameEvent['type'][] = ['HELD_CARD_REMOVED', 'DECK_SHUFFLED', 'DECK_CONTENTS_HIDDEN'];
-const isToasted = (e: GameEvent) => TOASTED.includes(e.type);
+const TOAST_MS = 10000;
+// Host changes are kept from every Player (see hiddenEdits); only the Host's Announcements get a toast.
+const isToasted = (e: GameEvent) => e.type === 'ANNOUNCEMENT';
 
 let nextToastId = 0;
 
@@ -26,7 +25,7 @@ export function App() {
   const [clockOffset, setClockOffset] = useState(0);
   // Players with no open connection.
   const [away, setAway] = useState<string[]>([]);
-  // Host deck actions, shown to everyone for a few seconds.
+  // Host Announcements, shown to everyone at the top for a few seconds.
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
@@ -99,7 +98,7 @@ export function App() {
       <MusicControls />
       <div className="toasts" role="status">
         {toasts.map((t) => (
-          <div key={t.id} className="toast">
+          <div key={t.id} className="toast announcement">
             {t.text}
           </div>
         ))}

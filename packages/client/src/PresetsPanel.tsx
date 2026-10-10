@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MAX_PRESET_NAME, type GameState, type Preset } from '@landlord/engine';
 import { exportPreset, importPreset, listPresets, loadPreset, savePreset } from './socket';
+import { AnnounceBox } from './AnnounceBox';
 
 /** A file name made from the Preset name, safe on any system. */
 const fileName = (name: string) => `${name.replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-') || 'preset'}.preset.json`;
@@ -81,6 +82,7 @@ export function PresetsPanel({ game, onClose }: { game: GameState; onClose: () =
           Close
         </button>
       </div>
+      <AnnounceBox />
       <p className="muted">A Preset holds the Rules, Board and both Decks, never cash, properties or positions.</p>
 
       <h3>Save the current setup</h3>

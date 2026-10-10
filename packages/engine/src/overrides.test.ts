@@ -60,7 +60,7 @@ function override(state: GameState, o: Override, by = 'ann', rng?: Rng) {
 }
 
 describe('Overrides', () => {
-  it('adjusts a Player’s cash and logs it publicly', () => {
+  it('adjusts a Player’s cash and logs it', () => {
     const o: Override = { kind: 'ADJUST_CASH', playerId: 'bob', amount: -200 };
 
     const { state, events } = override(table(), o);

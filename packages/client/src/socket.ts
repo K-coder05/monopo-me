@@ -180,6 +180,11 @@ export function undo(): Promise<string | null> {
   return new Promise((resolve) => socket.emit('UNDO', {}, toError(resolve)));
 }
 
+/** Host only: shows `text` to everyone at the top of the screen and in the log. Resolves like `send`. */
+export function announce(text: string): Promise<string | null> {
+  return new Promise((resolve) => socket.emit('ANNOUNCE', { text }, toError(resolve)));
+}
+
 /** Host only: removes a Player (bankrupt to the bank mid-game) or Spectator. Resolves like `send`. */
 export function kick(targetId: string): Promise<string | null> {
   return new Promise((resolve) => socket.emit('KICK', { targetId }, toError(resolve)));

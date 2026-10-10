@@ -13,7 +13,16 @@ const HIDDEN_EDITS: GameEvent['type'][] = [
   'CARD_ENABLED_CHANGED',
   'CARD_DELETED',
   'DECK_RESET',
+  'DECK_SHUFFLED',
+  'DECK_CONTENTS_HIDDEN',
+  'HELD_CARD_REMOVED',
+  'OVERRIDE',
+  'UNDONE',
 ];
 
-/** Events that reveal the Host changed the Rules, Board or cards; no Player is shown them, in toasts or the log. */
+/**
+ * Events that reveal the Host changed something: the Rules, Board, cards or Decks, or the game
+ * itself through an Override or Undo. No Player (the Host included) is shown them, in toasts or the
+ * log; the Host tells Players what they choose to with an Announcement.
+ */
 export const isHiddenEdit = (e: GameEvent) => HIDDEN_EDITS.includes(e.type);

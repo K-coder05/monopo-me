@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { HOTEL, isProperty, UNDO_LIMIT, type GameState, type Override } from '@landlord/engine';
 import { hostOverride, send, undo } from './socket';
+import { AnnounceBox } from './AnnounceBox';
 import { RoomMembers } from './RoomMembers';
 import { describeBuildings } from './spaces';
 
@@ -23,8 +24,8 @@ function PlayerSelect({ game, value, onChange, label, withBank }: PlayerSelectPr
 }
 
 /**
- * Host-only side panel with every Override and Undo. Each applies at once and is logged for
- * everyone; the server refuses what does not fit the game right now and says why.
+ * Host-only side panel with every Override and Undo. Each applies at once and no Player is
+ * told; the server refuses what does not fit the game right now and says why.
  */
 export function HostToolsPanel({ game, me, away, onClose }: { game: GameState; me: string; away: string[]; onClose: () => void }) {
   const firstPlayer = game.players.find((p) => !p.bankrupt)?.id ?? '';
@@ -62,7 +63,8 @@ export function HostToolsPanel({ game, me, away, onClose }: { game: GameState; m
           Close
         </button>
       </div>
-      <p className="muted">Overrides change the game at once and are logged for everyone.</p>
+      <AnnounceBox />
+      <p className="muted">Overrides change the game at once. No one is told; announce it above if you want them to know.</p>
       {turn?.step === 'awaitManual' && <p className="notice">A manual card is waiting: resolve it here, then press Done on the card.</p>}
 
       <h3>Undo</h3>

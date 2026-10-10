@@ -28,12 +28,25 @@ describe('isHiddenEdit', () => {
     expect(events.filter((e) => !isHiddenEdit(e))).toEqual([]);
   });
 
-  it('leaves play and other Host actions alone', () => {
+  it('flags Overrides, Undo and every other Host change to the Decks', () => {
     const events: GameEvent[] = [
-      { type: 'RETURNED_TO_LOBBY' },
+      { type: 'OVERRIDE', override: { kind: 'ADJUST_CASH', playerId: 'bob', amount: 100 } },
+      { type: 'OVERRIDE', override: { kind: 'END_TURN' } },
       { type: 'UNDONE' },
       { type: 'DECK_SHUFFLED', deck: 'chance' },
       { type: 'DECK_CONTENTS_HIDDEN', hidden: true },
+      { type: 'HELD_CARD_REMOVED', playerId: 'bob', cardId: 'c1', title: 'Get out of Jail' },
+    ];
+    expect(events.filter((e) => !isHiddenEdit(e))).toEqual([]);
+  });
+
+  it('leaves play, Announcements and the Room’s comings and goings alone', () => {
+    const events: GameEvent[] = [
+      { type: 'RETURNED_TO_LOBBY' },
+      { type: 'RENT_PAID', playerId: 'bob', ownerId: 'ann', index: 1, amount: 2 },
+      { type: 'ANNOUNCEMENT', text: 'GO pays 400 now' },
+      { type: 'GAME_PAUSED' },
+      { type: 'PLAYER_JOINED', playerId: 'cat' },
     ];
     expect(events.filter(isHiddenEdit)).toEqual([]);
   });

@@ -32,6 +32,8 @@ const ROOM_CHANGES = new Set<Action['type']>(['JOIN_ROOM', 'PAUSE', 'RESUME', 'T
 export function recordUndo(history: GameState[], before: GameState, after: GameState, action: Action): GameState[] {
   if (after.phase === 'lobby' || action.type === 'REMATCH') return [];
   if (before.phase !== 'playing' || EDITS.has(action.type) || ROOM_CHANGES.has(action.type)) return history;
+  // An Announcement changes nothing to step back over.
+  if (action.type === 'ANNOUNCE') return history;
   // A Player who has left cannot be brought back, so Undo cannot reach past their going.
   const departed = departing(action);
   if (departed !== undefined) return before.players.some((p) => p.id === departed) ? [] : history;

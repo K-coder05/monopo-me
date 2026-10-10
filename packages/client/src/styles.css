@@ -1081,3 +1081,25 @@ button.small {
     top: 0.5rem;
   }
 }
+
+/* The Host's optional Announcement, at the top of each Host panel. */
+.announce-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.announce-box textarea {
+  flex: 1 1 14rem;
+  min-width: 0;
+  font: inherit;
+  resize: vertical;
+}
+
+.toast.announcement {
+  max-width: min(36rem, calc(100vw - 2rem));
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}

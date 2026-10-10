@@ -68,10 +68,12 @@ export type ClientToServer = {
   /** Saves a Preset read from a file, replacing any with the same name; the server checks every value. */
   IMPORT_PRESET: (msg: { preset: Preset }, ack: Ack<{ name: string }>) => void;
   // Host only, during a game.
-  /** Changes game state directly; logged publicly. */
+  /** Changes game state directly; no Player is told (see ANNOUNCE). */
   HOST_OVERRIDE: (msg: { override: Override }, ack: Ack) => void;
   /** Steps back over the last game action or Override, up to UNDO_LIMIT times in a row. */
   UNDO: (msg: object, ack: Ack) => void;
+  /** Host only, in any phase: shows `text` to everyone at the top of the screen and in the log. */
+  ANNOUNCE: (msg: { text: string }, ack: Ack) => void;
   // Room membership. Host only, except LEAVE_ROOM.
   /** Freezes play and the Auction countdown for everyone. */
   PAUSE: (msg: object, ack: Ack) => void;

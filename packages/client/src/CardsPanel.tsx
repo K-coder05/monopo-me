@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { HELD_CHOICE_NEEDED, missingPlayers, type Card, type CardDraft, type DeckKind, type Effect, type GameState, type HeldCardChoice, type PartySelector } from '@landlord/engine';
 import { addCard, deleteCard, editCard, hideDeckContents, resetDeck, shuffleDeck } from './socket';
+import { AnnounceBox } from './AnnounceBox';
 import {
   blankCard,
   DECK_LABELS,
@@ -87,6 +88,7 @@ export function CardsPanel({ game, me, onClose }: { game: GameState; me: string;
           Close
         </button>
       </div>
+      {isHost && <AnnounceBox />}
 
       {isHost ? (
         <label className="hide-toggle">

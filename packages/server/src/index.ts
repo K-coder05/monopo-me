@@ -245,6 +245,15 @@ io.on('connection', (socket: GameSocket) => {
     }),
   );
 
+  // The engine checks the sender is the Host and the text is fit to show.
+  socket.on('ANNOUNCE', (msg, ack) =>
+    handle(ack, () => {
+      const { roomCode, playerId } = requirePlayer(socket);
+      broadcast(roomCode, rooms.act(roomCode, { type: 'ANNOUNCE', playerId, text: msg?.text }));
+      return {};
+    }),
+  );
+
   // Presets live on the server, outside any Room; the engine checks every value on save, import and load.
   socket.on('LIST_PRESETS', (_msg, ack) =>
     handle(ack, () => {

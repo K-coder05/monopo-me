@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { GameState, Rules, SpaceDefinition, SpaceEdit, SpaceField } from '@landlord/engine';
 import { send, updateBoard, updateRules } from './socket';
+import { AnnounceBox } from './AnnounceBox';
 import { FREE_PARKING_MODES, RULE_FIELDS, SPACE_FIELD_LABELS, type RuleField } from './ruleLabels';
 
 /** Which editable values each kind of space has. */
@@ -93,6 +94,7 @@ export function RulesPanel({ game, onClose }: { game: GameState; onClose: () => 
           Close
         </button>
       </div>
+      <AnnounceBox />
       {game.pendingEdit && <p className="notice">Your changes will apply when the current action finishes.</p>}
 
       <div className="rules-form">

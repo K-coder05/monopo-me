@@ -282,7 +282,7 @@ export type Turn = {
 
 export type JailReason = 'goToJail' | 'doubles' | 'card';
 
-/** A manual Host change to game state, applied at once and logged publicly. */
+/** A manual Host change to game state, applied at once and never announced. */
 export type Override =
   /** Adds `amount` (negative to take away) to the Player's cash; cash cannot go below 0. */
   | { kind: 'ADJUST_CASH'; playerId: string; amount: number }
@@ -401,7 +401,9 @@ export type GameEvent =
   | { type: 'PRESET_APPLIED'; name: string }
   | { type: 'OVERRIDE'; override: Override }
   /** The Host restored the game to before the last game action or Override. */
-  | { type: 'UNDONE' };
+  | { type: 'UNDONE' }
+  /** Free text from the Host to everyone: the only way Players learn of a Host change. */
+  | { type: 'ANNOUNCEMENT'; text: string };
 
 export type LogEntry = { seq: number; event: GameEvent };
 
@@ -515,7 +517,9 @@ export type Action =
   /** Sent by the server once the Host has been away too long, not by a Player. */
   | { type: 'HOST_TIMED_OUT'; toId: string }
   /** Host only: makes a Spectator a Player with startingCash, last in turn order. */
-  | { type: 'ADD_PLAYER'; playerId: string; spectatorId: string };
+  | { type: 'ADD_PLAYER'; playerId: string; spectatorId: string }
+  /** Host only, in any phase: shows `text` to everyone. Comes from an untrusted sender; the engine checks it. */
+  | { type: 'ANNOUNCE'; playerId: string; text: string };
 
 /** Randomness injected by the server. Returns an integer in [0, maxExclusive). */
 export type Rng = { int(maxExclusive: number): number };

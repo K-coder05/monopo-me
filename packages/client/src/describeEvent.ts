@@ -224,5 +224,7 @@ export function describeEvent(event: GameEvent, game: GameState): string {
       return `Host Override: ${override(event.override)}`;
     case 'UNDONE':
       return 'Host undid the last action';
+    case 'ANNOUNCEMENT':
+      return `Host announcement: ${event.text}`;
   }
 }

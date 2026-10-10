@@ -230,6 +230,9 @@ export function applyAction(state: GameState, action: Action, rules: Rules, rng:
     case 'ADD_PLAYER':
       next = addPlayer(state, action.playerId, action.spectatorId, rules, events);
       break;
+    case 'ANNOUNCE':
+      next = announce(state, action.playerId, action.text, events);
+      break;
     default:
       throw new IllegalActionError(`Unknown action ${(action as Action).type}`);
   }
@@ -308,6 +311,7 @@ const WHILE_PAUSED = new Set<Action['type']>([
   'TRANSFER_HOST',
   'HOST_TIMED_OUT',
   'ADD_PLAYER',
+  'ANNOUNCE',
 ]);
 
 function requireHost(state: GameState, playerId: string): void {
@@ -317,6 +321,20 @@ function requireHost(state: GameState, playerId: string): void {
 function requirePlaying(state: GameState): Turn {
   if (state.phase !== 'playing' || !state.turn) throw new IllegalActionError('No game is in progress');
   return state.turn;
+}
+
+export const MAX_ANNOUNCEMENT_LENGTH = 280;
+
+/** Host only: an Announcement changes nothing but the log. */
+function announce(state: GameState, playerId: string, text: unknown, events: GameEvent[]): GameState {
+  requireHost(state, playerId);
+  const trimmed = typeof text === 'string' ? text.trim() : '';
+  if (!trimmed) throw new IllegalActionError('Write something to announce');
+  if (trimmed.length > MAX_ANNOUNCEMENT_LENGTH) {
+    throw new IllegalActionError(`An announcement can be at most ${MAX_ANNOUNCEMENT_LENGTH} characters`);
+  }
+  events.push({ type: 'ANNOUNCEMENT', text: trimmed });
+  return state;
 }
 
 function pause(state: GameState, playerId: string, now: number, events: GameEvent[]): GameState {
@@ -1872,7 +1890,7 @@ function move(
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 
-/** A manual Host change to game state, applied at once and logged publicly (build spec §5). */
+/** A manual Host change to game state, applied at once and never announced (build spec §5). */
 function hostOverride(state: GameState, playerId: string, raw: unknown, rules: Rules, now: number, events: GameEvent[]): GameState {
   if (playerId !== state.hostId) throw new IllegalActionError('Only the Host can use Overrides');
   if (state.phase !== 'playing' || !state.turn) throw new IllegalActionError('Overrides are only for a game in progress');
